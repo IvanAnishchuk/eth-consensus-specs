@@ -36,16 +36,23 @@ def test_example_block_processing(spec, state):
     block_slot = state.slot + 1
 
     # 5. --- FIX: Get parent root from state.slot (which is 0) ---
-    parent_root = spec.get_block_root_at_slot(state, state.slot)
+    # Use `.hash_tree_root()` on the header object
+    parent_root = state.latest_block_header.hash_tree_root()
 
     block = spec.BeaconBlock(
         slot=block_slot, proposer_index=0, parent_root=parent_root, body=spec.BeaconBlockBody()
     )
 
-    # 6. --- FIX: process_block advances the state to slot 1 ---
-    # This call is auto-recorded as a trace step
-    spec.process_block(state, block)
+    # 6. --- FIX: Advance state by re-assigning the variable ---
+    # `process_slot` returns a *new* state object.
+    # This call is auto-recorded as a trace step.
+    state = spec.process_slot(state)
 
-    # 7. Replace `yield "post.ssz", ...`
+    # 7. --- Now process the block for slot 1 ---
+    # `process_block` also returns a new state.
+    # This call is auto-recorded as a trace step.
+    state = spec.process_block(state, block)
+
+    # 8. Replace `yield "post.ssz", ...`
     # This state is now at slot 1
     spec.ssz("post_state.ssz", state)
