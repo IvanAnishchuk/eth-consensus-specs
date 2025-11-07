@@ -140,7 +140,7 @@ class RecordingSpec(wrapt.ObjectProxy):
         - Passes through to `self.meta()`, `self.config()`, etc.
         """
         # 1. Check for recorder's own methods first (config, meta, ssz, etc.)
-        if name in ("config", "meta", "ssz", "save_all"):
+        if name in ("config", "meta", "ssz", "save_trace"):
             return object.__getattribute__(self, name)
 
         # 2. Get the real attribute from the wrapped 'spec'
@@ -158,7 +158,19 @@ class RecordingSpec(wrapt.ObjectProxy):
             serial_kwargs = self._serialize_kwargs(kwargs)
             step: dict[str, Any] = {"op": name, "params": serial_kwargs}
 
-            state_obj = kwargs.get("state", None)
+            # --- BUG FIX: Find the state object in args or kwargs ---
+            state_obj = None
+            if "state" in kwargs:
+                state_obj = kwargs["state"]
+            elif (
+                len(args) > 0
+                and isinstance(args[0], HashableContainer)
+                and type(args[0]).__name__ == "BeaconState"
+            ):
+                # Assume state is the first positional arg if it's a BeaconState
+                state_obj = args[0]
+            # --- END BUG FIX ---
+
             old_hash: bytes | None = None
             if state_obj and isinstance(state_obj, HashableContainer):
                 old_hash = state_obj.hash_tree_root()
@@ -243,7 +255,7 @@ class RecordingSpec(wrapt.ObjectProxy):
 
         return name
 
-    def save_all(self, output_dir: str) -> None:
+    def save_trace(self, output_dir: str) -> None:
         """
         Saves all recorded data (trace, config, meta, ssz)
         to the specified output directory.

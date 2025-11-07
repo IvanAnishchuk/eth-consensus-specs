@@ -42,15 +42,15 @@ from .helpers.genesis import create_genesis_state
 from .helpers.specs import (
     spec_targets,
 )
-from .helpers.typing import (
-    Spec,
-    SpecForks,
-)
 
 # --- BEGIN TRACING IMPORTS (PROJECT) ---
 # Import the recorder proxy and models.
 # This is now a hard dependency.
 from .helpers.trace.traced_spec import CLASS_NAME_MAP, NON_SSZ_FIXTURES, RecordingSpec
+from .helpers.typing import (
+    Spec,
+    SpecForks,
+)
 from .utils import (
     with_meta_tags,
 )
