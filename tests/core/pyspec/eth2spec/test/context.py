@@ -51,16 +51,9 @@ from .utils import (
     with_meta_tags,
 )
 # --- BEGIN TRACING IMPORTS (PROJECT) ---
-# Import the recorder proxy and models in a try...except block.
-# This ensures context.py can be imported even if the optional
-# tracing feature files are not present.
-try:
-    from .traced_spec import RecordingSpec, CLASS_NAME_MAP, NON_SSZ_FIXTURES
-except ImportError:
-    # Set to None as a flag that tracing is unavailable.
-    RecordingSpec = None
-    CLASS_NAME_MAP = {}
-    NON_SSZ_FIXTURES = set()
+# Import the recorder proxy and models.
+# This is now a hard dependency.
+from .traced_spec import RecordingSpec, CLASS_NAME_MAP, NON_SSZ_FIXTURES
 # --- END TRACING IMPORTS (PROJECT) ---
 
 
@@ -1002,16 +995,8 @@ def record_spec_trace(_fn: Callable | None = None, *, output_dir: str | None = N
     # This is the actual decorator that takes the test function 'fn'
     def decorator(fn: Callable):
 
-        if RecordingSpec is None:
-            # Gracefully handle if tracing files weren't imported
-            @functools.wraps(fn)
-            def no_op_wrapper(*args, **kwargs):
-                print(
-                    f"WARNING: Spec tracing is disabled for {fn.__name__}."
-                    " Failed to import trace recorder files."
-                )
-                return fn(*args, **kwargs)
-            return no_op_wrapper
+        # Removed the `if RecordingSpec is None:` check,
+        # as the import is now mandatory.
 
         @functools.wraps(fn)
         def wrapper(*args, **kwargs):
