@@ -10,6 +10,7 @@ from eth2spec.test.context import (
     with_all_phases,
 )
 
+
 @with_all_phases
 @spec_state_test
 @record_spec_trace

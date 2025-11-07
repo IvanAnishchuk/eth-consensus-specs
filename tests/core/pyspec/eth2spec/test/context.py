@@ -977,7 +977,7 @@ def record_spec_trace(_fn: Callable | None = None, *, output_dir: str | None = N
 
     If `output_dir` is None, a path is automatically generated from
     the test module, name, and parameters:
-    `traces/<module_name>/<test_name>/<param_name>_<param_value>/...`
+    `traces/<fork_name>/<module_name>/<test_name>/<param_name>_<param_value>/...`
 
     Usage:
         @with_all_phases
@@ -1047,6 +1047,11 @@ def record_spec_trace(_fn: Callable | None = None, *, output_dir: str | None = N
                     if output_dir:
                         trace_artifact_dir = output_dir
                     else:
+                        # --- MODIFICATION START ---
+                        # Get the fork name from the spec object we bound earlier.
+                        fork_name = real_spec.fork
+                        # --- MODIFICATION END ---
+
                         # Auto-generate path from test name and parameters
                         test_module = fn.__module__.split(".")[-1]
                         test_name = fn.__name__
@@ -1062,15 +1067,26 @@ def record_spec_trace(_fn: Callable | None = None, *, output_dir: str | None = N
 
                         if param_str:
                             trace_artifact_dir = os.path.join(
-                                DEFAULT_TRACE_DIR, test_module, test_name, param_str
+                                # --- MODIFICATION START ---
+                                DEFAULT_TRACE_DIR,
+                                fork_name,
+                                test_module,
+                                test_name,
+                                param_str,
+                                # --- MODIFICATION END ---
                             )
                         else:
                             trace_artifact_dir = os.path.join(
-                                DEFAULT_TRACE_DIR, test_module, test_name
+                                # --- MODIFICATION START ---
+                                DEFAULT_TRACE_DIR,
+                                fork_name,
+                                test_module,
+                                test_name,
+                                # --- MODIFICATION END ---
                             )
 
                     os.makedirs(trace_artifact_dir, exist_ok=True)
-                    trace_filepath = os.path.join(trace_artifact_dir, "trace.yaml")
+                    trace_filepath = os.path.join(trace_artifact_dir, "trace")
 
                     print(f"\n[Trace Recorder] Saving trace for {fn.__name__} to: {trace_filepath}")
                     recorder.save_trace(trace_filepath)
