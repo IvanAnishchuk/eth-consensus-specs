@@ -291,11 +291,13 @@ class RecordingSpec(wrapt.ObjectProxy):
 
             artifact_path = os.path.join(output_dir, filename)
             try:
+                # Use the object's own .serialize() method
                 with open(artifact_path, "wb") as f:
-                    f.write(ssz_encode(obj))
+                    f.write(obj.serialize(f))
+            except AttributeError:
+                print(f"ERROR: Object for {filename} is not SSZ-serializable (no .serialize())")
             except Exception as e:
                 print(f"ERROR: Failed to write SSZ artifact {filename}: {e}")
-                # Don't raise, try to write other files
 
         # --- 2. Write trace.yaml ---
         try:
