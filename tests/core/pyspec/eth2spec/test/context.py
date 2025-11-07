@@ -1,17 +1,16 @@
+# --- BEGIN TRACING IMPORTS ---
+import functools
 import importlib
+import inspect
+import os
+import re
 from collections.abc import Callable, Sequence
 from copy import deepcopy
 from dataclasses import dataclass
 from random import Random
 from typing import Any
 
-# --- BEGIN TRACING IMPORTS ---
-import functools
-import inspect
-import os
-import re
 # --- END TRACING IMPORTS ---
-
 import pytest
 from frozendict import frozendict
 from lru import LRU
@@ -47,13 +46,15 @@ from .helpers.typing import (
     Spec,
     SpecForks,
 )
-from .utils import (
-    with_meta_tags,
-)
+
 # --- BEGIN TRACING IMPORTS (PROJECT) ---
 # Import the recorder proxy and models.
 # This is now a hard dependency.
-from .traced_spec import RecordingSpec, CLASS_NAME_MAP, NON_SSZ_FIXTURES
+from .traced_spec import CLASS_NAME_MAP, NON_SSZ_FIXTURES, RecordingSpec
+from .utils import (
+    with_meta_tags,
+)
+
 # --- END TRACING IMPORTS (PROJECT) ---
 
 
@@ -952,16 +953,16 @@ def _sanitize_value_for_path(value: Any) -> str:
         s_val = value
     elif isinstance(value, bytes):
         s_val = value.hex()
-    elif hasattr(value, '__name__'):
+    elif hasattr(value, "__name__"):
         # For functions or types passed as parameters
         s_val = value.__name__
     else:
         s_val = str(value)
 
     # Replace invalid filesystem characters with an underscore
-    s_val = re.sub(r'[<>:"/\\|?*]', '_', s_val)
+    s_val = re.sub(r'[<>:"/\\|?*]', "_", s_val)
     # Replace other non-alphanumeric chars with a hyphen
-    s_val = re.sub(r'[^a-zA-Z0-9_-]', '-', s_val)
+    s_val = re.sub(r"[^a-zA-Z0-9_-]", "-", s_val)
     # Truncate to a reasonable length
     return s_val[:50]
 
@@ -994,7 +995,6 @@ def record_spec_trace(_fn: Callable | None = None, *, output_dir: str | None = N
 
     # This is the actual decorator that takes the test function 'fn'
     def decorator(fn: Callable):
-
         # Removed the `if RecordingSpec is None:` check,
         # as the import is now mandatory.
 
@@ -1048,7 +1048,7 @@ def record_spec_trace(_fn: Callable | None = None, *, output_dir: str | None = N
                         trace_artifact_dir = output_dir
                     else:
                         # Auto-generate path from test name and parameters
-                        test_module = fn.__module__.split('.')[-1]
+                        test_module = fn.__module__.split(".")[-1]
                         test_name = fn.__name__
 
                         param_parts = []
@@ -1072,16 +1072,12 @@ def record_spec_trace(_fn: Callable | None = None, *, output_dir: str | None = N
                     os.makedirs(trace_artifact_dir, exist_ok=True)
                     trace_filepath = os.path.join(trace_artifact_dir, "trace.yaml")
 
-                    print(
-                        f"\n[Trace Recorder] Saving trace for {fn.__name__} to: {trace_filepath}"
-                    )
+                    print(f"\n[Trace Recorder] Saving trace for {fn.__name__} to: {trace_filepath}")
                     recorder.save_trace(trace_filepath)
                 except Exception as e:
                     # Print the error but do not re-raise, to avoid
                     # masking the original test failure (if any).
-                    print(
-                        f"ERROR: [Trace Recorder] FAILED to save trace for {fn.__name__}: {e}"
-                    )
+                    print(f"ERROR: [Trace Recorder] FAILED to save trace for {fn.__name__}: {e}")
 
         return wrapper
 
@@ -1098,5 +1094,6 @@ def record_spec_trace(_fn: Callable | None = None, *, output_dir: str | None = N
     else:
         # This should not be reachable if used as a decorator
         raise TypeError("Invalid use of @record_spec_trace decorator.")
+
 
 # --- END SPEC TRACE RECORDER LOGIC ---

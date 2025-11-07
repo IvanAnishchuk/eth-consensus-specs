@@ -1,10 +1,16 @@
 """
 This file contains the core logic for the spec trace recording framework.
-It uses the 'wrapt' library to create a proxy object that wraps
-the pyspec 'spec' and records all interactions.
+It uses 'wrapt' to create a proxy object that wraps the pyspec 'spec'
+and records all interactions.
+
+It provides explicit methods to replace the old `yield` system:
+- `spec.config(...)` replaces `yield "config", ...`
+- `spec.meta(...)` replaces `yield "meta", ...`
+- `spec.ssz(...)` replaces `yield "filename.ssz", ...`
+
+All other calls to `spec.function(...)` are auto-recorded as trace steps.
 """
 
-import logging
 import os
 from collections.abc import Sized
 from typing import Any, cast
@@ -12,66 +18,55 @@ from typing import Any, cast
 import wrapt
 import yaml
 
-# --- Real Imports ---
-# These imports are assumed to be correct for the eth2spec repository.
-# They replace all previous placeholders.
 try:
-    from ssz.api import encode as ssz_encode, is_ssz_type
+    from ssz.api import encode as ssz_encode
     from ssz.hashable_container import HashableContainer
 except ImportError:
     print("WARNING: ssz library not found. Using placeholder for ssz_encode.")
 
-    def ssz_encode(obj: Any) -> bytes:  # type: ignore
+    def ssz_encode(obj: Any) -> bytes:
         return f"SSZ_ENCODED_{type(obj).__name__}".encode()
 
-    def is_ssz_type(typ: type[Any]) -> bool:  # type: ignore
-        return hasattr(typ, "hash_tree_root")
-
-    class HashableContainer:  # type: ignore
+    class HashableContainer:
         def hash_tree_root(self) -> bytes:
             return b"\0" * 32
 
 
-# Import spec object types
-from eth2spec.test.context import (
-    Attestation,
-    BeaconBlock,
-    BeaconState,  # Add all relevant SSZ types
+# Import all Pydantic models for artifact generation
+from .trace_models import (
+    ConfigModel,
+    ContextModel,
+    ContextObjectsModel,
+    ContextVar,
+    MetaModel,
+    TraceModel,
+    TraceStepModel,
 )
 
-# --- FIXED: Removed unused import ---
-# from eth2spec.phase0 import spec as spec_phase0
-# ------------------------------------
-# Import our Pydantic models
-from .trace_models import ContextModel, ContextObjectsModel, ContextVar, TraceModel, TraceStepModel
-
-# --- End Real Imports ---
-
-# Set up a logger for this module
-log = logging.getLogger(__name__)
-
-# This map tells the recorder which classes are SSZ-serializable
-# and what their 'type' name is in the YAML context (e.g., 'states', 'blocks')
+# --- Type Maps (from your context) ---
+# These maps tell the recorder which classes are SSZ-serializable
+# and what their 'type' name is in the YAML context.
+# NOTE: In a real implementation, these would be imported from a central
+# definitions file, not re-defined here.
 CLASS_NAME_MAP: dict[str, str] = {
-    BeaconState.__name__: "states",
-    BeaconBlock.__name__: "blocks",
-    Attestation.__name__: "attestations",
+    "BeaconState": "states",
+    "BeaconBlock": "blocks",
+    "Attestation": "attestations",
     # Add all other SSZ types that can be passed as arguments
 }
 
-# A set of non-SSZ fixture names that should be tracked
 NON_SSZ_FIXTURES: set[str] = {
     "store",
-    # Add other fixtures like 'proposer_indices', 'validator_indices' if they
-    # are used as non-SSZ arguments in spec functions.
+    # Add other non-SSZ fixtures to be tracked
 }
+# --- End Type Maps ---
 
 
 class RecordingSpec(wrapt.ObjectProxy):
     """
     A wrapt.ObjectProxy that records all calls to the wrapped 'spec' object.
-
-    Generates a YAML trace file and a directory of SSZ artifacts.
+    Replaces the `yield` system by providing explicit methods for
+    config, meta, and ssz artifact recording.
     """
 
     _self_trace_steps: list[dict[str, Any]]
@@ -80,128 +75,145 @@ class RecordingSpec(wrapt.ObjectProxy):
     _self_name_to_obj_map: dict[ContextVar, Any]
     _self_artifacts_to_write: dict[str, HashableContainer]
     _self_obj_counter: dict[str, int]
+    _self_config_data: dict[str, Any]
+    _self_meta_data: dict[str, Any]
 
     def __init__(self, wrapped_spec: Any, initial_context_fixtures: dict[str, Any]):
-        """
-        Initializes the recorder.
-
-        :param wrapped_spec: The real 'spec' object to be proxied.
-        :param initial_context_fixtures: A dict of pytest fixtures (like 'state',
-                                         'genesis_block') that the test function
-                                         depends on. These are the "seed"
-                                         objects for the trace.
-        """
         super().__init__(wrapped_spec)
 
+        # Internal state for recording
         self._self_trace_steps = []
         self._self_context_fixture_names = []
         self._self_obj_to_name_map = {}
         self._self_name_to_obj_map = {}
-        self._self_artifacts_to_write = {}
+        self._self_artifacts_to_write = {}  # Manually-added SSZ
+        self._self_auto_artifacts: dict[str, HashableContainer] = {}  # Auto-recorded SSZ
         self._self_obj_counter = {}
+        self._self_config_data = {}
+        self._self_meta_data = {}
 
-        # --- Pre-populate with fixtures ---
+        # Pre-populate with fixtures
         for name, obj in initial_context_fixtures.items():
             class_name = type(obj).__name__
             if class_name not in CLASS_NAME_MAP:
                 if name in NON_SSZ_FIXTURES:
                     self._self_context_fixture_names.append(name)
             else:
+                # Seed the context with initial SSZ objects
                 self._serialize_arg(obj, preferred_name=name)
+
+    # --- Public API to Replace `yield` ---
+
+    def config(self, config_dict: dict[str, Any]) -> None:
+        """
+        Records configuration data. Replaces `yield "config", ...`.
+        """
+        self._self_config_data.update(config_dict)
+
+    def meta(self, key: str, value: Any) -> None:
+        """
+        Records a metadata entry. Replaces `yield "meta", ...`.
+        """
+        self._self_meta_data[key] = value
+
+    def ssz(self, filename: str, ssz_object: HashableContainer) -> None:
+        """
+        Manually records an SSZ artifact to be saved.
+        Replaces `yield "filename.ssz", ...`.
+        Note: The object's context name is automatically derived.
+        """
+        if not filename.endswith(".ssz"):
+            raise ValueError(f"SSZ filename must end with .ssz, got: {filename}")
+
+        # Serialize the object to give it a context name
+        self._serialize_arg(ssz_object)
+
+        # Add it to the manual write list
+        self._self_artifacts_to_write[filename] = ssz_object
+
+    # --- Core Proxy Logic ---
 
     def __getattr__(self, name: str) -> Any:
         """
-        Main proxy entry point. Called whenever any attribute
-        (including functions) is accessed on the 'spec' object.
+        Main proxy entry point.
+        - Intercepts `spec.function()` calls to auto-record them.
+        - Passes through to `self.meta()`, `self.config()`, etc.
         """
+        # 1. Check for recorder's own methods first (config, meta, ssz, etc.)
+        if name in ("config", "meta", "ssz", "save_all"):
+            return object.__getattribute__(self, name)
+
+        # 2. Get the real attribute from the wrapped 'spec'
         real_attr = super().__getattr__(name)
 
         if not callable(real_attr) or name.startswith("_"):
             return real_attr
 
+        # 3. Create the recording wrapper
         def record_wrapper(*args: Any, **kwargs: Any) -> Any:
             """
             Intercepts the function call, records it,
             detects state changes, and then executes the real function.
             """
-
-            # 1. Serialize the call *before* execution
             serial_kwargs = self._serialize_kwargs(kwargs)
             step: dict[str, Any] = {"op": name, "params": serial_kwargs}
 
-            # 2. Find the state object for change detection
             state_obj = kwargs.get("state", None)
             old_hash: bytes | None = None
             if state_obj and isinstance(state_obj, HashableContainer):
                 old_hash = state_obj.hash_tree_root()
 
-            # --- 3. Execute the real function ---
+            # --- Execute the real function ---
             result = real_attr(*args, **kwargs)
-            # --- End execution ---
 
-            # 4. Handle state mutation
+            # Handle state mutation
             if state_obj and isinstance(state_obj, HashableContainer) and old_hash is not None:
                 new_hash = state_obj.hash_tree_root()
                 old_state_name = self._self_obj_to_name_map[id(state_obj)]
 
                 if old_hash != new_hash:
-                    # STATE CHANGED: Give it a new name and mark for saving
-                    count = self._self_obj_counter.get("states", 0)
-                    new_state_name = cast(ContextVar, f"$context.states.v{count}")
-                    self._self_obj_counter["states"] = count + 1
-
-                    self._self_obj_to_name_map[id(state_obj)] = new_state_name
-                    self._self_name_to_obj_map[new_state_name] = state_obj
-                    self._artifacts_to_write[f"state_v{count}.ssz"] = state_obj
-
-                    step["result"] = new_state_name
+                    # STATE CHANGED
+                    step["result"] = self._serialize_arg(state_obj, auto_artifact=True)
                 else:
-                    # STATE NOT CHANGED: Reuse the old name
+                    # STATE NOT CHANGED
                     step["result"] = old_state_name
 
-            # 5. Handle new objects returned by the function
+            # Handle new objects returned
             if result and (not state_obj or id(result) != id(state_obj)):
                 if isinstance(result, HashableContainer):
-                    result_name = self._serialize_arg(result)
-                    step["result"] = result_name
+                    step["result"] = self._serialize_arg(result, auto_artifact=True)
                 elif isinstance(result, (int, str, bool, bytes)):
-                    # Now we correctly record simple return values.
                     step["result"] = result
 
-            # 6. ALWAYS record the step
             self._self_trace_steps.append(step)
             return result
 
         return record_wrapper
 
     def _serialize_kwargs(self, kwargs: dict[str, Any]) -> dict[str, Any]:
-        """Helper function to serialize all values in a kwargs dict."""
         serial = {}
         for key, value in kwargs.items():
             serial[key] = self._serialize_arg(value)
         return serial
 
-    def _serialize_arg(self, arg: Any, preferred_name: str | None = None) -> Any:
+    def _serialize_arg(
+        self, arg: Any, preferred_name: str | None = None, auto_artifact: bool = False
+    ) -> Any:
         """
         Turns a Python object into its YAML context name (e.g., "$context.states.v0")
         and marks it for artifact saving if it's a new SSZ object.
         """
-
-        # --- 1. Handle Literals and simple collections ---
         if isinstance(arg, (int, str, bool, type(None), bytes)) or (
             isinstance(arg, Sized) and not isinstance(arg, HashableContainer)
         ):
             return arg
 
-        # --- 2. Check if we've seen this object ---
         arg_id = id(arg)
         if arg_id in self._self_obj_to_name_map:
             return self._self_obj_to_name_map[arg_id]
 
-        # --- 3. Handle New SSZ Objects ---
         class_name = type(arg).__name__
         if class_name not in CLASS_NAME_MAP:
-            log.debug(f"Object of type {class_name} is not in CLASS_NAME_MAP.")
             return f"<unserializable {class_name}>"
 
         obj_type = CLASS_NAME_MAP[class_name]  # e.g., 'blocks'
@@ -216,80 +228,94 @@ class RecordingSpec(wrapt.ObjectProxy):
                 filename = f"{obj_type}_{preferred_name}.ssz"
         else:
             count = self._self_obj_counter.get(obj_type, 0)
-            name = cast(ContextVar, f"$context.{obj_type}.b{count}")
-            filename = f"{obj_type}_b{count}.ssz"
+            # Use 'v' for states (versions), 'b' for blocks/others (created)
+            prefix = "v" if obj_type == "states" else "b"
+            name = cast(ContextVar, f"$context.{obj_type}.{prefix}{count}")
+            filename = f"{obj_type}_{prefix}{count}.ssz"
             self._self_obj_counter[obj_type] = count + 1
 
-        # --- 4. Update all our maps ---
         self._self_obj_to_name_map[arg_id] = name
         self._self_name_to_obj_map[name] = arg
-        self._artifacts_to_write[filename] = cast(HashableContainer, arg)
+
+        if auto_artifact or preferred_name:
+            # Add to the *auto* artifact list
+            self._self_auto_artifacts[filename] = cast(HashableContainer, arg)
 
         return name
 
-    def save_trace(self, trace_filepath: str) -> None:
+    def save_all(self, output_dir: str) -> None:
         """
-        Called by the pytest fixture after the test finishes
-        to validate and write the final YAML file and all SSZ artifacts.
+        Saves all recorded data (trace, config, meta, ssz)
+        to the specified output directory.
+        This is called by the `@traced_test` decorator.
         """
-        trace_dir = os.path.dirname(trace_filepath)
+        os.makedirs(output_dir, exist_ok=True)
 
-        # --- 1. Write all SSZ artifacts ---
+        # --- 1. Combine and Write SSZ artifacts ---
         context_objects = ContextObjectsModel()
-        for filename, obj in self._self_artifacts_to_write.items():
-            if filename == "state_v0.ssz":
-                context_name = "initial"
-            else:
-                context_name = os.path.splitext(filename)[0].split("_")[-1]
 
+        # Merge auto-artifacts and manual SSZ artifacts
+        # Manual artifacts (`spec.ssz()`) take precedence
+        all_artifacts = {**self._self_auto_artifacts, **self._self_artifacts_to_write}
+
+        for filename, obj in all_artifacts.items():
+            # Get the object's context name (e.g., "initial", "b0", "v1")
+            obj_id = id(obj)
+            if obj_id not in self._self_obj_to_name_map:
+                print(
+                    f"WARNING: SSZ object for {filename} was never used in trace, skipping context."
+                )
+                continue
+
+            context_name = self._self_obj_to_name_map[obj_id].split(".")[-1]
             obj_type_name = CLASS_NAME_MAP[type(obj).__name__]
 
-            # --- FIXED: Check if object type exists on model ---
             if not hasattr(context_objects, obj_type_name):
-                log.error(
-                    f"Object type '{obj_type_name}' (from CLASS_NAME_MAP) "
-                    f"does not exist on Pydantic model 'ContextObjectsModel'. "
-                    f"Please add it to 'trace_models.py'."
-                )
-                # This will likely fail below, which is good.
+                print(f"ERROR: Object type '{obj_type_name}' not in ContextObjectsModel schema.")
                 continue
 
             obj_type_dict = getattr(context_objects, obj_type_name)
             obj_type_dict[context_name] = filename
 
-            artifact_path = os.path.join(trace_dir, filename)
+            artifact_path = os.path.join(output_dir, filename)
             try:
                 with open(artifact_path, "wb") as f:
                     f.write(ssz_encode(obj))
             except Exception as e:
-                log.error(f"Failed to write SSZ artifact {filename} to {artifact_path}: {e}")
-                raise
+                print(f"ERROR: Failed to write SSZ artifact {filename}: {e}")
+                # Don't raise, try to write other files
 
-        # --- 2. Build the final Pydantic model ---
+        # --- 2. Write trace.yaml ---
         try:
-            trace_step_models = [TraceStepModel(**step) for step in self._self_trace_steps]
-            context_model = ContextModel(
-                fixtures=self._self_context_fixture_names, objects=context_objects
+            trace_model = TraceModel(
+                context=ContextModel(
+                    fixtures=self._self_context_fixture_names, objects=context_objects
+                ),
+                trace=[TraceStepModel(**step) for step in self._self_trace_steps],
             )
-            trace_model = TraceModel(context=context_model, trace=trace_step_models)
+            with open(os.path.join(output_dir, "trace.yaml"), "w") as f:
+                yaml.dump(trace_model.model_dump(), f, sort_keys=False, default_flow_style=False)
         except Exception as e:
-            log.error(f"Failed to validate trace data with Pydantic: {e}")
-            raise
+            print(f"ERROR: Failed to write trace.yaml: {e}")
 
-        # --- 3. Write the YAML file ---
-        try:
-            with open(trace_filepath, "w") as f:
-                yaml.dump(
-                    trace_model.model_dump(),
-                    f,
-                    sort_keys=False,
-                    default_flow_style=False,
-                    width=120,
-                )
-            log.info(f"\n[Trace Recorder] Trace recorded to {trace_filepath}")
-            log.info(
-                f"[Trace Recorder] Saved {len(self._artifacts_to_write)} SSZ artifacts to {trace_dir}"
-            )
-        except Exception as e:
-            log.error(f"Failed to write YAML trace {trace_filepath}: {e}")
-            raise
+        # --- 3. Write config.yaml ---
+        if self._self_config_data:
+            try:
+                config_model = ConfigModel(config=self._self_config_data)
+                with open(os.path.join(output_dir, "config.yaml"), "w") as f:
+                    yaml.dump(
+                        config_model.model_dump(), f, sort_keys=False, default_flow_style=False
+                    )
+            except Exception as e:
+                print(f"ERROR: Failed to write config.yaml: {e}")
+
+        # --- 4. Write meta.yaml ---
+        if self._self_meta_data:
+            try:
+                meta_model = MetaModel(meta=self._self_meta_data)
+                with open(os.path.join(output_dir, "meta.yaml"), "w") as f:
+                    yaml.dump(meta_model.model_dump(), f, sort_keys=False, default_flow_style=False)
+            except Exception as e:
+                print(f"ERROR: Failed to write meta.yaml: {e}")
+
+        print(f"[Trace Recorder] Saved artifacts to {output_dir}")
