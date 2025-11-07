@@ -4,14 +4,16 @@ This test is linear and does not use `yield`.
 """
 
 from eth2spec.test.context import (
-    traced_test,
+    record_spec_trace,
     # Note: spec_state_test is no longer imported
     with_all_phases,
+    spec_state_test,
 )
 
 
 @with_all_phases
-@traced_test
+@spec_state_test
+@record_spec_trace
 def test_example_block_processing(spec, state):
     """
     A simple test that processes a block.

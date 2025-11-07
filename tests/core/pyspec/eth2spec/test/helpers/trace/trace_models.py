@@ -4,9 +4,10 @@ This defines the structure for all generated YAML files, ensuring
 that the test artifacts are valid and machine-readable.
 """
 
-from typing import Any, constr, TypeAlias
+from typing import Any, TypeAlias
 
 from pydantic import BaseModel, Field
+from pydantic.types import constr
 
 # --- Trace Model Schemas (from your example) ---
 
