@@ -18,18 +18,8 @@ from typing import Any, cast
 import wrapt
 import yaml
 
-try:
-    from ssz.api import encode as ssz_encode
-    from ssz.hashable_container import HashableContainer
-except ImportError:
-    print("WARNING: ssz library not found. Using placeholder for ssz_encode.")
-
-    def ssz_encode(obj: Any) -> bytes:
-        return f"SSZ_ENCODED_{type(obj).__name__}".encode()
-
-    class HashableContainer:
-        def hash_tree_root(self) -> bytes:
-            return b"\0" * 32
+from eth2spec.utils.ssz.ssz_impl import serialize as ssz_serialize
+from remerkleable.complex import Container
 
 
 # Import all Pydantic models for artifact generation
@@ -73,7 +63,7 @@ class RecordingSpec(wrapt.ObjectProxy):
     _self_context_fixture_names: list[str]
     _self_obj_to_name_map: dict[int, ContextVar]
     _self_name_to_obj_map: dict[ContextVar, Any]
-    _self_artifacts_to_write: dict[str, HashableContainer]
+    _self_artifacts_to_write: dict[str, Container]
     _self_obj_counter: dict[str, int]
     _self_config_data: dict[str, Any]
     _self_meta_data: dict[str, Any]
@@ -87,7 +77,7 @@ class RecordingSpec(wrapt.ObjectProxy):
         self._self_obj_to_name_map = {}
         self._self_name_to_obj_map = {}
         self._self_artifacts_to_write = {}  # Manually-added SSZ
-        self._self_auto_artifacts: dict[str, HashableContainer] = {}  # Auto-recorded SSZ
+        self._self_auto_artifacts: dict[str, Container] = {}  # Auto-recorded SSZ
         self._self_obj_counter = {}
         self._self_config_data = {}
         self._self_meta_data = {}
@@ -116,7 +106,7 @@ class RecordingSpec(wrapt.ObjectProxy):
         """
         self._self_meta_data[key] = value
 
-    def ssz(self, filename: str, ssz_object: HashableContainer) -> None:
+    def ssz(self, filename: str, ssz_object: Container) -> None:
         """
         Manually records an SSZ artifact to be saved.
         Replaces `yield "filename.ssz", ...`.
@@ -164,7 +154,7 @@ class RecordingSpec(wrapt.ObjectProxy):
                 state_obj = kwargs["state"]
             elif (
                 len(args) > 0
-                and isinstance(args[0], HashableContainer)
+                and isinstance(args[0], Container)
                 and type(args[0]).__name__ == "BeaconState"
             ):
                 # Assume state is the first positional arg if it's a BeaconState
@@ -172,27 +162,29 @@ class RecordingSpec(wrapt.ObjectProxy):
             # --- END BUG FIX ---
 
             old_hash: bytes | None = None
-            if state_obj and isinstance(state_obj, HashableContainer):
+            if state_obj and isinstance(state_obj, Container):
                 old_hash = state_obj.hash_tree_root()
 
             # --- Execute the real function ---
             result = real_attr(*args, **kwargs)
 
             # Handle state mutation
-            if state_obj and isinstance(state_obj, HashableContainer) and old_hash is not None:
+            if state_obj and isinstance(state_obj, Container) and old_hash is not None:
                 new_hash = state_obj.hash_tree_root()
                 old_state_name = self._self_obj_to_name_map[id(state_obj)]
 
                 if old_hash != new_hash:
+                    print('change')
                     # STATE CHANGED
                     step["result"] = self._serialize_arg(state_obj, auto_artifact=True)
                 else:
                     # STATE NOT CHANGED
+                    print('no change')
                     step["result"] = old_state_name
 
             # Handle new objects returned
             if result and (not state_obj or id(result) != id(state_obj)):
-                if isinstance(result, HashableContainer):
+                if isinstance(result, Container):
                     step["result"] = self._serialize_arg(result, auto_artifact=True)
                 elif isinstance(result, (int, str, bool, bytes)):
                     step["result"] = result
@@ -216,7 +208,7 @@ class RecordingSpec(wrapt.ObjectProxy):
         and marks it for artifact saving if it's a new SSZ object.
         """
         if isinstance(arg, (int, str, bool, type(None), bytes)) or (
-            isinstance(arg, Sized) and not isinstance(arg, HashableContainer)
+            isinstance(arg, Sized) and not isinstance(arg, Container)
         ):
             return arg
 
@@ -251,7 +243,7 @@ class RecordingSpec(wrapt.ObjectProxy):
 
         if auto_artifact or preferred_name:
             # Add to the *auto* artifact list
-            self._self_auto_artifacts[filename] = cast(HashableContainer, arg)
+            self._self_auto_artifacts[filename] = cast(Container, arg)
 
         return name
 
@@ -293,7 +285,7 @@ class RecordingSpec(wrapt.ObjectProxy):
             try:
                 # Use the object's own .serialize() method
                 with open(artifact_path, "wb") as f:
-                    f.write(obj.serialize(f))
+                    f.write(ssz_serialize(obj))
             except AttributeError:
                 print(f"ERROR: Object for {filename} is not SSZ-serializable (no .serialize())")
             except Exception as e:
