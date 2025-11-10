@@ -7,6 +7,7 @@ from eth2spec.test.context import (
     record_spec_trace,
     spec_state_test,
     with_all_phases,
+    with_gloas_and_later,
 )
 
 
@@ -56,3 +57,30 @@ def test_example_block_processing(spec, state):
     # 8. Replace `yield "post.ssz", ...`
     # This state is now at slot 1
     spec.ssz("post_state.ssz", state)
+
+@with_gloas_and_later
+@spec_state_test
+@record_spec_trace
+def test_example_execution_payload_availability_reset_from_set(spec, state):
+    """
+    Test that process_slot correctly resets execution_payload_availability
+    from 1 -> 0 for the next slot.
+    """
+    spec.meta("description", "Test that process_slot correctly resets")
+    # Set the next slot's availability to 1 initially
+    next_slot_index = (state.slot + 1) % spec.SLOTS_PER_HISTORICAL_ROOT
+    state.execution_payload_availability[next_slot_index] = 0b1
+
+    # Verify it's set to 1 before processing
+    assert state.execution_payload_availability[next_slot_index] == 0b1
+
+    spec.ssz("pre_state.ssz", state)
+    spec.ssz("slots.ssz", 1)
+    #yield "slots", 1  # XXX not sure about this one, need to trace how yilding works
+
+    # Process one slot
+    spec.process_slots(state, state.slot + 1)
+
+    spec.ssz("post_state.ssz", state)
+
+    assert state.execution_payload_availability[next_slot_index] == 0b0
