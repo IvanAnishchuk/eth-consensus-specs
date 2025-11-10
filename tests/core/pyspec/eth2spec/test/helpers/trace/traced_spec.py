@@ -56,7 +56,7 @@ class RecordingSpec(wrapt.ObjectProxy):
     """
     A wrapt.ObjectProxy that records all calls to the wrapped 'spec' object.
     Replaces the `yield` system by providing explicit methods for
-    config, meta, and ssz artifact recording.
+    configure, meta, and ssz artifact recording.
     """
 
     _self_trace_steps: list[dict[str, Any]]
@@ -94,7 +94,7 @@ class RecordingSpec(wrapt.ObjectProxy):
 
     # --- Public API to Replace `yield` ---
 
-    def config(self, config_dict: dict[str, Any]) -> None:
+    def configure(self, config_dict: dict[str, Any]) -> None:
         """
         Records configuration data. Replaces `yield "config", ...`.
         """
@@ -106,20 +106,24 @@ class RecordingSpec(wrapt.ObjectProxy):
         """
         self._self_meta_data[key] = value
 
-    def ssz(self, filename: str, ssz_object: Container) -> None:
+    def ssz(self, name: str, ssz_object: Container) -> None:
         """
         Manually records an SSZ artifact to be saved.
         Replaces `yield "filename.ssz", ...`.
         Note: The object's context name is automatically derived.
         """
-        if not filename.endswith(".ssz"):
-            raise ValueError(f"SSZ filename must end with .ssz, got: {filename}")
+        step: dict[str, Any] = {"op": "ssz", "params": {"name": name}}
+        if not name.endswith(".ssz"):
+            raise ValueError(f"SSZ filename must end with .ssz, got: {name}")
 
         # Serialize the object to give it a context name
         self._serialize_arg(ssz_object)
+        step["result"] = self._serialize_arg(ssz_object, auto_artifact=True)
 
         # Add it to the manual write list
-        self._self_artifacts_to_write[filename] = ssz_object
+        self._self_artifacts_to_write[name] = ssz_object
+        self._self_trace_steps.append(step)
+
 
     # --- Core Proxy Logic ---
 
@@ -127,14 +131,19 @@ class RecordingSpec(wrapt.ObjectProxy):
         """
         Main proxy entry point.
         - Intercepts `spec.function()` calls to auto-record them.
-        - Passes through to `self.meta()`, `self.config()`, etc.
+        - Passes through to `self.meta()`, `self.configure()`, etc.
         """
-        # 1. Check for recorder's own methods first (config, meta, ssz, etc.)
-        if name in ("config", "meta", "ssz", "save_trace"):
+        # 1. Check for recorder's own methods first (configure, meta, ssz, etc.)
+        if name in ("configure", "meta", "ssz", "save_trace"):
             return object.__getattribute__(self, name)
 
         # 2. Get the real attribute from the wrapped 'spec'
         real_attr = super().__getattr__(name)
+
+        #print(f'{name} ')
+        if not name.islower():
+            # this is weird but types like List are functions, not classes here, need to just return them
+            return real_attr
 
         if not callable(real_attr) or name.startswith("_"):
             return real_attr
@@ -150,6 +159,7 @@ class RecordingSpec(wrapt.ObjectProxy):
 
             # --- BUG FIX: Find the state object in args or kwargs ---
             state_obj = None
+            #print(args, kwargs)
             if "state" in kwargs:
                 state_obj = kwargs["state"]
             elif (
@@ -159,37 +169,51 @@ class RecordingSpec(wrapt.ObjectProxy):
             ):
                 # Assume state is the first positional arg if it's a BeaconState
                 state_obj = args[0]
+                # FIXME it's almost never the first arg
             # --- END BUG FIX ---
 
+            # FIXME: something is wrong here, state is always recorded the same
+
             old_hash: bytes | None = None
+            old_id: int | None = None
             if state_obj and isinstance(state_obj, Container):
                 old_hash = state_obj.hash_tree_root()
+                old_id = id(state_obj)
 
             # --- Execute the real function ---
             result = real_attr(*args, **kwargs)
 
-            # Handle state mutation
-            if state_obj and isinstance(state_obj, Container) and old_hash is not None:
-                new_hash = state_obj.hash_tree_root()
-                old_state_name = self._self_obj_to_name_map[id(state_obj)]
-
-                if old_hash != new_hash:
-                    print('change')
-                    # STATE CHANGED
-                    step["result"] = self._serialize_arg(state_obj, auto_artifact=True)
-                else:
-                    # STATE NOT CHANGED
-                    print('no change')
-                    step["result"] = old_state_name
-
             # Handle new objects returned
-            if result and (not state_obj or id(result) != id(state_obj)):
+            #if result and (not state_obj or id(result) != id(state_obj)):
+            if True:
                 if isinstance(result, Container):
                     step["result"] = self._serialize_arg(result, auto_artifact=True)
                 elif isinstance(result, (int, str, bool, bytes)):
                     step["result"] = result
 
             self._self_trace_steps.append(step)
+
+            # Handle state mutation
+            # TODO: this should be a separate thing: we need to record both result and state change
+            if state_obj and isinstance(state_obj, Container):
+                new_hash = state_obj.hash_tree_root()
+                if old_id is not None:
+                    old_state_name = self._self_obj_to_name_map.get(old_id)
+                else:
+                    old_state_name = None
+
+                load_state_step: dict[str, Any] = {"op": "load_state", "params": {}}
+
+                if old_hash != new_hash:
+                    print('change')
+                    # STATE CHANGED
+                    load_state_step["result"] = self._serialize_arg(state_obj, auto_artifact=True)
+                    self._self_trace_steps.append(load_state_step)
+                else:
+                    # STATE NOT CHANGED
+                    print('no change')
+                    load_state_step["result"] = old_state_name
+
             return result
 
         return record_wrapper
@@ -249,7 +273,7 @@ class RecordingSpec(wrapt.ObjectProxy):
 
     def save_trace(self, output_dir: str) -> None:
         """
-        Saves all recorded data (trace, config, meta, ssz)
+        Saves all recorded data (trace, configure, meta, ssz)
         to the specified output directory.
         This is called by the `@traced_test` decorator.
         """
