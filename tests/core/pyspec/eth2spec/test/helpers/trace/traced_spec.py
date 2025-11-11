@@ -11,6 +11,7 @@ It provides explicit methods to replace the old `yield` system:
 All other calls to `spec.function(...)` are auto-recorded as trace steps.
 """
 
+import inspect  # <--- ADDED
 import os
 from collections.abc import Sized
 from typing import Any, cast
@@ -163,8 +164,17 @@ class RecordingSpec(wrapt.ObjectProxy):
             Intercepts the function call, records it,
             detects state changes, and then executes the real function.
             """
-            serial_kwargs = self._serialize_kwargs(kwargs)
-            step: dict[str, Any] = {"op": name, "params": serial_kwargs}
+            # --- CHANGED: Use inspect to bind args/kwargs to parameter names ---
+            sig = inspect.signature(real_attr)
+            bound_args = sig.bind(*args, **kwargs)
+            bound_args.apply_defaults()
+
+            serial_params = {}
+            for param_name, param_value in bound_args.arguments.items():
+                serial_params[param_name] = self._serialize_arg(param_value)
+
+            step: dict[str, Any] = {"op": name, "params": serial_params}
+            # ------------------------------------------------------------------
 
             # --- BUG FIX: Find the state object in args or kwargs ---
             state_obj = None
@@ -190,6 +200,7 @@ class RecordingSpec(wrapt.ObjectProxy):
                 old_id = id(state_obj)
 
             # --- Execute the real function ---
+            # (With Patch 2 Exception handling included)
             try:
                 result = real_attr(*args, **kwargs)
             except Exception as e:
@@ -203,7 +214,7 @@ class RecordingSpec(wrapt.ObjectProxy):
             if True:
                 if isinstance(result, Container):
                     step["result"] = self._serialize_arg(result, auto_artifact=True)
-                elif isinstance(result, (int, str, bool, bytes)):
+                elif isinstance(result, (int, str, bool, bytes, type(None))):
                     step["result"] = result
 
             self._self_trace_steps.append(step)
@@ -220,24 +231,16 @@ class RecordingSpec(wrapt.ObjectProxy):
                 load_state_step: dict[str, Any] = {"op": "load_state", "params": {}}
 
                 if old_hash != new_hash:
-                    print("change")
                     # STATE CHANGED
                     load_state_step["result"] = self._serialize_arg(state_obj, auto_artifact=True)
                     self._self_trace_steps.append(load_state_step)
                 else:
                     # STATE NOT CHANGED
-                    print("no change")
                     load_state_step["result"] = old_state_name
 
             return result
 
         return record_wrapper
-
-    def _serialize_kwargs(self, kwargs: dict[str, Any]) -> dict[str, Any]:
-        serial = {}
-        for key, value in kwargs.items():
-            serial[key] = self._serialize_arg(value)
-        return serial
 
     def _serialize_arg(
         self, arg: Any, preferred_name: str | None = None, auto_artifact: bool = False
