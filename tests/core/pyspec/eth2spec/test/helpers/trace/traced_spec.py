@@ -249,9 +249,19 @@ class RecordingSpec(wrapt.ObjectProxy):
         Turns a Python object into its YAML context name (e.g., "$context.states.v0")
         and marks it for artifact saving if it's a new SSZ object.
         """
-        if isinstance(arg, (int, str, bool, type(None), bytes)) or (
-            isinstance(arg, Sized) and not isinstance(arg, Container)
-        ):
+        # Handle primitives and ensure they are standard Python types
+        # (not subclasses like Slot, ValidatorIndex, etc.)
+        if isinstance(arg, bool):
+            return bool(arg)
+        if isinstance(arg, int):
+            return int(arg)
+        if isinstance(arg, str):
+            return str(arg)
+        if isinstance(arg, type(None)):
+            return None
+        if isinstance(arg, bytes):
+            return bytes(arg)
+        if isinstance(arg, Sized) and not isinstance(arg, Container):
             return arg
 
         class_name = type(arg).__name__
@@ -346,7 +356,7 @@ class RecordingSpec(wrapt.ObjectProxy):
                 trace=[TraceStepModel(**step) for step in self._self_trace_steps],
             )
             with open(os.path.join(output_dir, "trace.yaml"), "w") as f:
-                yaml.dump(trace_model.model_dump(), f, sort_keys=False, default_flow_style=False)
+                yaml.dump(trace_model.model_dump(exclude_none=True), f, sort_keys=False, default_flow_style=False)
         except Exception as e:
             print(f"ERROR: Failed to write trace.yaml: {e}")
 
