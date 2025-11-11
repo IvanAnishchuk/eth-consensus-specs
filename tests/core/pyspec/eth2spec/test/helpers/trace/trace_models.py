@@ -55,6 +55,9 @@ class TraceStepModel(BaseModel):
     result: Any | None = Field(
         None, description="The expected result, often a new context var or None"
     )
+    error: dict[str, str] | None = Field(
+        None, description="Error details if the operation raised an exception"
+    )
 
 
 class TraceModel(BaseModel):

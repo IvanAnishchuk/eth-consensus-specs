@@ -190,7 +190,13 @@ class RecordingSpec(wrapt.ObjectProxy):
                 old_id = id(state_obj)
 
             # --- Execute the real function ---
-            result = real_attr(*args, **kwargs)
+            try:
+                result = real_attr(*args, **kwargs)
+            except Exception as e:
+                step["result"] = None
+                step["error"] = {"type": type(e).__name__, "message": str(e)}
+                self._self_trace_steps.append(step)
+                raise e
 
             # Handle new objects returned
             # if result and (not state_obj or id(result) != id(state_obj)):
