@@ -118,7 +118,7 @@ class RecordingSpec(wrapt.ObjectProxy):
 
         # Serialize the object to give it a context name
         self._serialize_arg(ssz_object)
-        step["result"] = self._serialize_arg(ssz_object, auto_artifact=True)
+        step["result"] = self._serialize_arg(ssz_object, preferred_name=name)
 
         # Add it to the manual write list
         self._self_artifacts_to_write[name] = ssz_object
@@ -236,14 +236,15 @@ class RecordingSpec(wrapt.ObjectProxy):
         ):
             return arg
 
-        arg_id = id(arg)
-        if arg_id in self._self_obj_to_name_map:
-            return self._self_obj_to_name_map[arg_id]
-
         class_name = type(arg).__name__
         if class_name not in CLASS_NAME_MAP:
             return f"<unserializable {class_name}>"
 
+        cast_arg = cast(Container, arg)
+
+        arg_id = id(cast_arg)
+        if arg_id in self._self_obj_to_name_map:
+            return self._self_obj_to_name_map[arg_id]
         obj_type = CLASS_NAME_MAP[class_name]  # e.g., 'blocks'
         filename: str
 
@@ -263,11 +264,11 @@ class RecordingSpec(wrapt.ObjectProxy):
             self._self_obj_counter[obj_type] = count + 1
 
         self._self_obj_to_name_map[arg_id] = name
-        self._self_name_to_obj_map[name] = arg
+        self._self_name_to_obj_map[name] = cast_arg
 
         if auto_artifact or preferred_name:
             # Add to the *auto* artifact list
-            self._self_auto_artifacts[filename] = cast(Container, arg)
+            self._self_auto_artifacts[filename] = cast_arg
 
         return name
 
