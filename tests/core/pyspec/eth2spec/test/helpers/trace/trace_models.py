@@ -39,6 +39,9 @@ class ContextModel(BaseModel):
     fixtures: list[str] = Field(
         default_factory=list, description="List of non-SSZ fixtures to inject, e.g., 'store'"
     )
+    parameters: dict[str, Any] = Field(
+        default_factory=dict, description="Simple test setup parameters (e.g., validator_count)"
+    )
     objects: ContextObjectsModel = Field(default_factory=ContextObjectsModel)
 
 
@@ -57,6 +60,7 @@ class TraceStepModel(BaseModel):
 class TraceModel(BaseModel):
     """The root model for the trace.yaml file."""
 
+    metadata: dict[str, Any] = Field(..., description="Test run metadata (fork, preset, etc.)")
     context: ContextModel
     trace: list[TraceStepModel]
 

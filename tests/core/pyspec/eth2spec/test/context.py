@@ -15,6 +15,7 @@ import pytest
 from frozendict import frozendict
 from lru import LRU
 
+import eth2spec
 from eth2spec.utils import bls
 from tests.infra.yield_generator import vector_test
 
@@ -1030,7 +1031,25 @@ def record_spec_trace(_fn: Callable | None = None, *, output_dir: str | None = N
                     initial_fixtures[name] = value
 
             # 3. --- Create and inject proxy ---
-            recorder = RecordingSpec(real_spec, initial_fixtures)
+            # --- START MODIFICATION ---
+            # Capture metadata
+            metadata = {
+                "fork": real_spec.fork,
+                "preset": real_spec.config.PRESET_BASE,
+                "generator_version": eth2spec.VERSION,
+            }
+
+            # Capture simple parameters (excluding spec and objects)
+            parameters = {}
+            for name, value in bound_args.arguments.items():
+                if isinstance(value, (int, str, bool, type(None))):
+                    parameters[name] = value
+
+            recorder = RecordingSpec(
+                real_spec, initial_fixtures, metadata=metadata, parameters=parameters
+            )
+            # --- END MODIFICATION ---
+
             # Replace the original 'spec' with the proxied 'recorder'
             bound_args.arguments[spec_arg_name] = recorder
 

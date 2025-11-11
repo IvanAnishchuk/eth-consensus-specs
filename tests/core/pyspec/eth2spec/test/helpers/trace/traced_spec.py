@@ -66,9 +66,16 @@ class RecordingSpec(wrapt.ObjectProxy):
     _self_artifacts_to_write: dict[str, Container]
     _self_obj_counter: dict[str, int]
     _self_config_data: dict[str, Any]
-    _self_meta_data: dict[str, Any]
+    _self_metadata: dict[str, Any]
+    _self_parameters: dict[str, Any]
 
-    def __init__(self, wrapped_spec: Any, initial_context_fixtures: dict[str, Any]):
+    def __init__(
+        self,
+        wrapped_spec: Any,
+        initial_context_fixtures: dict[str, Any],
+        metadata: dict[str, Any] | None = None,
+        parameters: dict[str, Any] | None = None,
+    ):
         super().__init__(wrapped_spec)
 
         # Internal state for recording
@@ -80,7 +87,9 @@ class RecordingSpec(wrapt.ObjectProxy):
         self._self_auto_artifacts: dict[str, Container] = {}  # Auto-recorded SSZ
         self._self_obj_counter = {}
         self._self_config_data = {}
-        self._self_meta_data = {}
+        # Merged metadata: holds both static (init) and dynamic (yielded) metadata
+        self._self_metadata = metadata or {}
+        self._self_parameters = parameters or {}
 
         # Pre-populate with fixtures
         for name, obj in initial_context_fixtures.items():
@@ -103,8 +112,9 @@ class RecordingSpec(wrapt.ObjectProxy):
     def meta(self, key: str, value: Any) -> None:
         """
         Records a metadata entry. Replaces `yield "meta", ...`.
+        This updates the unified metadata dictionary.
         """
-        self._self_meta_data[key] = value
+        self._self_metadata[key] = value
 
     def ssz(self, name: str, ssz_object: Container) -> None:
         """
@@ -124,7 +134,6 @@ class RecordingSpec(wrapt.ObjectProxy):
         self._self_artifacts_to_write[name] = ssz_object
         self._self_trace_steps.append(step)
 
-
     # --- Core Proxy Logic ---
 
     def __getattr__(self, name: str) -> Any:
@@ -140,7 +149,7 @@ class RecordingSpec(wrapt.ObjectProxy):
         # 2. Get the real attribute from the wrapped 'spec'
         real_attr = super().__getattr__(name)
 
-        #print(f'{name} ')
+        # print(f'{name} ')
         if not name.islower():
             # this is weird but types like List are functions, not classes here, need to just return them
             return real_attr
@@ -159,7 +168,7 @@ class RecordingSpec(wrapt.ObjectProxy):
 
             # --- BUG FIX: Find the state object in args or kwargs ---
             state_obj = None
-            #print(args, kwargs)
+            # print(args, kwargs)
             if "state" in kwargs:
                 state_obj = kwargs["state"]
             elif (
@@ -184,7 +193,7 @@ class RecordingSpec(wrapt.ObjectProxy):
             result = real_attr(*args, **kwargs)
 
             # Handle new objects returned
-            #if result and (not state_obj or id(result) != id(state_obj)):
+            # if result and (not state_obj or id(result) != id(state_obj)):
             if True:
                 if isinstance(result, Container):
                     step["result"] = self._serialize_arg(result, auto_artifact=True)
@@ -205,13 +214,13 @@ class RecordingSpec(wrapt.ObjectProxy):
                 load_state_step: dict[str, Any] = {"op": "load_state", "params": {}}
 
                 if old_hash != new_hash:
-                    print('change')
+                    print("change")
                     # STATE CHANGED
                     load_state_step["result"] = self._serialize_arg(state_obj, auto_artifact=True)
                     self._self_trace_steps.append(load_state_step)
                 else:
                     # STATE NOT CHANGED
-                    print('no change')
+                    print("no change")
                     load_state_step["result"] = old_state_name
 
             return result
@@ -319,8 +328,11 @@ class RecordingSpec(wrapt.ObjectProxy):
         # --- 2. Write trace.yaml ---
         try:
             trace_model = TraceModel(
+                metadata=self._self_metadata,
                 context=ContextModel(
-                    fixtures=self._self_context_fixture_names, objects=context_objects
+                    fixtures=self._self_context_fixture_names,
+                    parameters=self._self_parameters,
+                    objects=context_objects,
                 ),
                 trace=[TraceStepModel(**step) for step in self._self_trace_steps],
             )
@@ -341,9 +353,9 @@ class RecordingSpec(wrapt.ObjectProxy):
                 print(f"ERROR: Failed to write config.yaml: {e}")
 
         # --- 4. Write meta.yaml ---
-        if self._self_meta_data:
+        if self._self_metadata:
             try:
-                meta_model = MetaModel(meta=self._self_meta_data)
+                meta_model = MetaModel(meta=self._self_metadata)
                 with open(os.path.join(output_dir, "meta.yaml"), "w") as f:
                     yaml.dump(meta_model.model_dump(), f, sort_keys=False, default_flow_style=False)
             except Exception as e:
