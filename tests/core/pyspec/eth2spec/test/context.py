@@ -1036,7 +1036,6 @@ def record_spec_trace(_fn: Callable | None = None, *, output_dir: str | None = N
             metadata = {
                 "fork": real_spec.fork,
                 "preset": real_spec.config.PRESET_BASE,
-                "generator_version": eth2spec.VERSION,
             }
 
             # Capture simple parameters (excluding spec and objects)
