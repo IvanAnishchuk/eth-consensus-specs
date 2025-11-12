@@ -1,14 +1,12 @@
 """
-This file contains the core logic for the spec trace recording framework.
-It uses 'wrapt' to create a proxy object that wraps the pyspec 'spec'
-and records all interactions.
+Traced Spec Proxy
+-----------------
+A wrapper around the Ethereum Specification object that records all interactions.
 
-It provides explicit methods to replace the old `yield` system:
-- `spec.config(...)` replaces `yield "config", ...`
-- `spec.meta(...)` replaces `yield "meta", ...`
-- `spec.ssz(...)` replaces `yield "filename.ssz", ...`
-
-All other calls to `spec.function(...)` are auto-recorded as trace steps.
+It uses `wrapt.ObjectProxy` to intercept function calls, recording their:
+1. Arguments (sanitized and mapped to context variables)
+2. Return values
+3. State mutations (by tracking changes in the BeaconState root hash)
 """
 
 import inspect
@@ -22,7 +20,6 @@ from remerkleable.complex import Container
 
 from eth2spec.utils.ssz.ssz_impl import serialize as ssz_serialize
 
-# Import all Pydantic models for artifact generation
 from .trace_models import (
     ConfigModel,
     ContextModel,
@@ -33,34 +30,39 @@ from .trace_models import (
     TraceStepModel,
 )
 
-# --- Type Maps ---
-# These maps tell the recorder which classes are SSZ-serializable
-# and what their 'type' name is in the YAML context.
+# --- Configuration ---
+
+# Classes that should be treated as tracked SSZ objects in the trace.
+# Maps class name -> context collection name.
 CLASS_NAME_MAP: dict[str, str] = {
     "BeaconState": "states",
     "BeaconBlock": "blocks",
     "Attestation": "attestations",
-    # Add all other SSZ types that can be passed as arguments
 }
 
-NON_SSZ_FIXTURES: set[str] = {
-    "store",
-    # Add other non-SSZ fixtures to be tracked
-}
+# Non-SSZ fixtures that should be captured by name.
+NON_SSZ_FIXTURES: set[str] = {"store"}
 
 
 class RecordingSpec(wrapt.ObjectProxy):
     """
-    A wrapt.ObjectProxy that records all calls to the wrapped 'spec' object.
-    Replaces the `yield` system by providing explicit methods for
-    configure, meta, and ssz artifact recording.
+    A proxy that wraps the 'spec' object to record execution traces.
+
+    It replaces the legacy `yield` pattern with explicit API methods:
+    - `spec.config(...)`
+    - `spec.meta(...)`
+    - `spec.ssz(...)`
+
+    It automatically intercepts all other function calls.
     """
 
+    # Internal state (prefixed to avoid collision with proxied object attributes)
     _self_trace_steps: list[dict[str, Any]]
     _self_context_fixture_names: list[str]
     _self_obj_to_name_map: dict[int, ContextVar]
     _self_name_to_obj_map: dict[ContextVar, Any]
     _self_artifacts_to_write: dict[str, Container]
+    _self_auto_artifacts: dict[str, Container]
     _self_obj_counter: dict[str, int]
     _self_config_data: dict[str, Any]
     _self_metadata: dict[str, Any]
@@ -75,212 +77,251 @@ class RecordingSpec(wrapt.ObjectProxy):
     ):
         super().__init__(wrapped_spec)
 
-        # Internal state for recording
+        # Initialize internal storage
         self._self_trace_steps = []
         self._self_context_fixture_names = []
         self._self_obj_to_name_map = {}
         self._self_name_to_obj_map = {}
-        self._self_artifacts_to_write = {}  # Manually-added SSZ
-        self._self_auto_artifacts: dict[str, Container] = {}  # Auto-recorded SSZ
+        self._self_artifacts_to_write = {}  # Explicitly saved artifacts
+        self._self_auto_artifacts = {}  # Automatically captured artifacts
         self._self_obj_counter = {}
         self._self_config_data = {}
-        # Merged metadata: holds both static (init) and dynamic (yielded) metadata
+
         self._self_metadata = metadata or {}
         self._self_parameters = parameters or {}
 
-        # Pre-populate with fixtures
+        # Register initial fixtures
         for name, obj in initial_context_fixtures.items():
-            class_name = type(obj).__name__
-            if class_name not in CLASS_NAME_MAP:
-                if name in NON_SSZ_FIXTURES:
-                    self._self_context_fixture_names.append(name)
-            else:
-                # Seed the context with initial SSZ objects
-                self._serialize_arg(obj, preferred_name=name)
+            self._self_register_fixture(name, obj)
 
-    # --- Public API to Replace `yield` ---
+    def _self_register_fixture(self, name: str, obj: Any) -> None:
+        """Registers an initial fixture in the recording context."""
+        class_name = type(obj).__name__
+        if class_name not in CLASS_NAME_MAP:
+            if name in NON_SSZ_FIXTURES:
+                self._self_context_fixture_names.append(name)
+        else:
+            # Seed the context with initial SSZ objects
+            self._self_process_arg(obj, preferred_name=name)
+
+    # --- Public Recording API ---
 
     def configure(self, config_dict: dict[str, Any]) -> None:
-        """
-        Records configuration data. Replaces `yield "config", ...`.
-        """
+        """Records configuration data (replaces `yield "config", ...`)."""
         self._self_config_data.update(config_dict)
 
     def meta(self, key: str, value: Any) -> None:
-        """
-        Records a metadata entry. Replaces `yield "meta", ...`.
-        This updates the unified metadata dictionary.
-        """
+        """Records metadata (replaces `yield "meta", ...`)."""
         self._self_metadata[key] = value
 
     def ssz(self, name: str, ssz_object: Container) -> None:
         """
-        Manually records an SSZ artifact to be saved.
-        Replaces `yield "filename.ssz", ...`.
-        Note: The object's context name is automatically derived.
+        Manually records an SSZ artifact.
+        The object is registered in the context and marked for writing.
         """
-        step: dict[str, Any] = {"op": "ssz", "params": {"name": name}}
 
-        # Serialize the object to give it a context name
-        # We use preferred_name=name so the filename matches what was requested
-        step["result"] = self._serialize_arg(ssz_object, preferred_name=name)
+        # Register the object to ensure it has a context name
+        context_name = self._self_process_arg(ssz_object, preferred_name=name)
 
-        # Add it to the manual write list
+        # Record the step
+        self._self_trace_steps.append(
+            {"op": "ssz", "params": {"name": name}, "result": context_name}
+        )
+
+        # Queue for saving
         self._self_artifacts_to_write[name] = ssz_object
-        self._self_trace_steps.append(step)
 
-    # --- Core Proxy Logic ---
+    # --- Interception Logic ---
 
     def __getattr__(self, name: str) -> Any:
         """
-        Main proxy entry point.
-        - Intercepts `spec.function()` calls to auto-record them.
-        - Passes through to `self.meta()`, `self.configure()`, etc.
+        Intercepts attribute access on the spec object.
+        If the attribute is a callable (function), it is wrapped to record execution.
         """
-        # 1. Check for recorder's own methods first (configure, meta, ssz, etc.)
+        # 1. Access recorder's own methods first
         if name in ("configure", "meta", "ssz", "save_trace"):
             return object.__getattribute__(self, name)
 
-        # 2. Get the real attribute from the wrapped 'spec'
+        # 2. Retrieve the real attribute from the wrapped spec
         real_attr = super().__getattr__(name)
 
-        if not name.islower():
-            # types like List are functions, not classes here, need to just return them
+        # 3. If it's not a function or shouldn't be traced, return as-is
+        if not callable(real_attr) or not name.islower() or name.startswith("_"):
             return real_attr
 
-        if not callable(real_attr) or name.startswith("_"):
-            return real_attr
+        # 4. Return the recording wrapper
+        return self._self_create_wrapper(name, real_attr)
 
-        # 3. Create the recording wrapper
+    def _self_create_wrapper(self, op_name: str, real_func: Any) -> Any:
+        """Creates a closure to record the function call."""
+
         def record_wrapper(*args: Any, **kwargs: Any) -> Any:
-            """
-            Intercepts the function call, records it,
-            detects state changes, and then executes the real function.
-            """
-            # Bind args/kwargs to parameter names
-            sig = inspect.signature(real_attr)
-            bound_args = sig.bind(*args, **kwargs)
-            bound_args.apply_defaults()
+            # A. Prepare arguments: bind to signature and serialize
+            bound_args = self._self_bind_args(real_func, args, kwargs)
+            serial_params = {k: self._self_process_arg(v) for k, v in bound_args.arguments.items()}
 
-            serial_params = {}
-            for param_name, param_value in bound_args.arguments.items():
-                serial_params[param_name] = self._serialize_arg(param_value)
+            # B. Identify if a State object is being mutated
+            state_obj, old_hash, old_id = self._self_capture_pre_state(bound_args)
 
-            step: dict[str, Any] = {"op": name, "params": serial_params}
-
-            # Find the state object in args or kwargs
-            state_obj = None
-            if "state" in kwargs:
-                state_obj = kwargs["state"]
-            elif (
-                len(args) > 0
-                and isinstance(args[0], Container)
-                and type(args[0]).__name__ == "BeaconState"
-            ):
-                state_obj = args[0]
-
-            old_hash: bytes | None = None
-            old_id: int | None = None
-            if state_obj and isinstance(state_obj, Container):
-                old_hash = state_obj.hash_tree_root()
-                old_id = id(state_obj)
-
-            # Execute the real function
+            # C. Execute the real function
             try:
-                result = real_attr(*args, **kwargs)
+                result = real_func(*args, **kwargs)
+                error = None
             except Exception as e:
-                step["result"] = None
-                step["error"] = {"type": type(e).__name__, "message": str(e)}
-                self._self_trace_steps.append(step)
+                result = None
+                error = {"type": type(e).__name__, "message": str(e)}
+                # We must record the step before re-raising
+                self._self_record_step(op_name, serial_params, result, error)
                 raise e
 
-            # Serialize result
-            step["result"] = self._serialize_arg(result, auto_artifact=True)
-            self._self_trace_steps.append(step)
+            # D. Record the successful step
+            self._self_record_step(op_name, serial_params, result, None)
 
-            # Handle state mutation
-            if state_obj and isinstance(state_obj, Container):
-                new_hash = state_obj.hash_tree_root()
-                load_state_step: dict[str, Any] = {"op": "load_state", "params": {}}
-
-                if old_hash != new_hash:
-                    # STATE CHANGED
-                    # Update mapping for this object ID to the NEW hash
-                    root_hex = new_hash.hex()
-                    new_name = cast(ContextVar, f"$context.states.{root_hex}")
-
-                    self._self_obj_to_name_map[old_id] = new_name
-
-                    # Register artifact
-                    filename = f"state_{root_hex}.ssz"
-                    self._self_name_to_obj_map[new_name] = state_obj
-                    self._self_auto_artifacts[filename] = state_obj
-
-                    load_state_step["result"] = new_name
-                    self._self_trace_steps.append(load_state_step)
+            # E. Check for state mutation and record 'load_state' if needed
+            if state_obj is not None:
+                self._self_check_mutation(state_obj, old_hash, old_id)
 
             return result
 
         return record_wrapper
 
-    def _serialize_arg(
+    def _self_bind_args(self, func: Any, args: tuple, kwargs: dict) -> inspect.BoundArguments:
+        """Binds positional and keyword arguments to the function signature."""
+        sig = inspect.signature(func)
+        bound = sig.bind(*args, **kwargs)
+        bound.apply_defaults()
+        return bound
+
+    def _self_capture_pre_state(
+        self, bound_args: inspect.BoundArguments
+    ) -> tuple[Any, bytes | None, int | None]:
+        """Finds the BeaconState argument (if any) and captures its root hash."""
+        state_obj = None
+
+        # Look for 'state' in arguments
+        if "state" in bound_args.arguments:
+            state_obj = bound_args.arguments["state"]
+        elif bound_args.args:
+            # Fallback: Check first positional arg
+            # We check class name string to allow for Mocks in tests
+            if type(bound_args.args[0]).__name__ == "BeaconState":
+                state_obj = bound_args.args[0]
+
+        # If found, capture identity and hash
+        # Use duck typing for hash_tree_root to support Mocks
+        if state_obj and hasattr(state_obj, "hash_tree_root"):
+            return state_obj, state_obj.hash_tree_root(), id(state_obj)
+
+        return None, None, None
+
+    def _self_record_step(self, op: str, params: dict, result: Any, error: dict | None) -> None:
+        """Appends a step to the trace."""
+        step: dict[str, Any] = {"op": op, "params": params}
+
+        if error:
+            step["result"] = None
+            step["error"] = error
+        else:
+            # Auto-register the result if it's an SSZ object
+            step["result"] = self._self_process_arg(result, auto_artifact=True)
+
+        self._self_trace_steps.append(step)
+
+    def _self_check_mutation(
+        self, state_obj: Any, old_hash: bytes | None, old_id: int | None
+    ) -> None:
+        """Checks if the state root changed and records a 'load_state' op if so."""
+        if not hasattr(state_obj, "hash_tree_root") or old_hash is None:
+            return
+
+        new_hash = state_obj.hash_tree_root()
+        if old_hash == new_hash:
+            return  # No change
+
+        # State changed: calculate new context name based on root hash
+        root_hex = new_hash.hex()
+        new_name = cast(ContextVar, f"$context.states.{root_hex}")
+
+        # Update internal mapping for this object ID
+        if old_id is not None:
+            self._self_obj_to_name_map[old_id] = new_name
+
+        # Queue artifact for saving
+        filename = f"states_{root_hex}.ssz"
+        self._self_name_to_obj_map[new_name] = state_obj
+        self._self_auto_artifacts[filename] = state_obj
+
+        # Record the implicit load operation
+        self._self_trace_steps.append({"op": "load_state", "params": {}, "result": new_name})
+
+    def _self_process_arg(
         self, arg: Any, preferred_name: str | None = None, auto_artifact: bool = False
     ) -> Any:
         """
-        Turns a Python object into its YAML context name (e.g., "$context.states.0x...")
-        and marks it for artifact saving if it's a new SSZ object.
+        Serializes an argument for the trace.
+        - Primitives (int, bool, str) are returned as-is.
+        - Bytes are hex-encoded (raw, no 0x).
+        - SSZ objects are registered in the context and returned as '$context.type.id'.
         """
-        # Handle primitives
+        # 1. Handle Primitives
         if isinstance(arg, bool):
             return arg
         if isinstance(arg, int):
-            return int(arg)
+            return int(arg)  # Convert subclasses (like Slot) to int
         if isinstance(arg, str):
             return str(arg)
         if isinstance(arg, bytes):
-            return "0x" + arg.hex()
+            return arg.hex()  # Raw hex string
         if arg is None:
             return None
         if isinstance(arg, Sized) and not isinstance(arg, Container):
-            return arg
+            return arg  # Lists, tuples, etc.
 
+        # 2. Handle SSZ Objects
         class_name = type(arg).__name__
         if class_name not in CLASS_NAME_MAP:
             return f"<unserializable {class_name}>"
 
         cast_arg = cast(Container, arg)
-
         arg_id = id(cast_arg)
-        if arg_id in self._self_obj_to_name_map:
+
+        # If we've seen this object exact instance before, return its existing name
+        if arg_id in self._self_obj_to_name_map and not preferred_name:
             return self._self_obj_to_name_map[arg_id]
 
+        # 3. Register New Object
         obj_type = CLASS_NAME_MAP[class_name]  # e.g., 'blocks'
+        name: ContextVar
         filename: str
 
         if preferred_name:
-            # If a specific filename/fixture name was requested
+            # Case A: Manual naming (via fixtures or ssz() call)
             if obj_type == "states":
-                # For states, we ALWAYS use the hash as the context ID for consistency
+                # States are ALWAYS content-addressed by hash in the context variable,
+                # even if they have a custom filename on disk.
                 root_hex = cast_arg.hash_tree_root().hex()
                 name = cast(ContextVar, f"$context.states.{root_hex}")
-                # Use the preferred name for the file (e.g. 'post_state.ssz')
                 filename = (
                     preferred_name if preferred_name.endswith(".ssz") else f"{preferred_name}.ssz"
                 )
             else:
                 name = cast(ContextVar, f"$context.{obj_type}.{preferred_name}")
                 filename = f"{obj_type}_{preferred_name}.ssz"
-        # Auto-generated name
+
         elif obj_type == "states":
+            # Case B: Auto-naming for States (Content-Addressed)
             root_hex = cast_arg.hash_tree_root().hex()
             name = cast(ContextVar, f"$context.states.{root_hex}")
-            filename = f"state_{root_hex}.ssz"
+            filename = f"states_{root_hex}.ssz"
+
         else:
+            # Case C: Auto-naming for others (Sequential)
             count = self._self_obj_counter.get(obj_type, 0)
             name = cast(ContextVar, f"$context.{obj_type}.b{count}")
             filename = f"{obj_type}_b{count}.ssz"
             self._self_obj_counter[obj_type] = count + 1
 
+        # Update mappings
         self._self_obj_to_name_map[arg_id] = name
         self._self_name_to_obj_map[name] = cast_arg
 
@@ -291,42 +332,36 @@ class RecordingSpec(wrapt.ObjectProxy):
 
     def save_trace(self, output_dir: str) -> None:
         """
-        Saves all recorded data (trace, configure, meta, ssz)
-        to the specified output directory.
+        Writes the captured trace and artifacts to the filesystem.
         """
         os.makedirs(output_dir, exist_ok=True)
 
-        # --- 1. Combine and Write SSZ artifacts ---
-        context_objects = ContextObjectsModel()
-
-        # Merge auto-artifacts and manual SSZ artifacts
+        # 1. Collect all artifacts to write
+        # Manual artifacts take precedence over auto-captured ones
         all_artifacts = {**self._self_auto_artifacts, **self._self_artifacts_to_write}
 
+        context_objects = ContextObjectsModel()
+
         for filename, obj in all_artifacts.items():
+            # Skip objects that ended up unused in the trace
             obj_id = id(obj)
             if obj_id not in self._self_obj_to_name_map:
                 continue
 
+            # Map context name -> filename
             context_name = self._self_obj_to_name_map[obj_id].split(".")[-1]
             obj_type_name = CLASS_NAME_MAP[type(obj).__name__]
 
-            if not hasattr(context_objects, obj_type_name):
-                print(f"ERROR: Object type '{obj_type_name}' not in ContextObjectsModel schema.")
-                continue
+            if hasattr(context_objects, obj_type_name):
+                getattr(context_objects, obj_type_name)[context_name] = filename
 
-            obj_type_dict = getattr(context_objects, obj_type_name)
-            obj_type_dict[context_name] = filename
+            # Write binary file
+            self._self_write_ssz(os.path.join(output_dir, filename), obj)
 
-            artifact_path = os.path.join(output_dir, filename)
-            try:
-                with open(artifact_path, "wb") as f:
-                    f.write(ssz_serialize(obj))
-            except Exception as e:
-                print(f"ERROR: Failed to write SSZ artifact {filename}: {e}")
-
-        # --- 2. Write trace.yaml ---
-        try:
-            trace_model = TraceModel(
+        # 2. Write YAML files
+        self._self_write_yaml(
+            os.path.join(output_dir, "trace.yaml"),
+            TraceModel(
                 metadata=self._self_metadata,
                 context=ContextModel(
                     fixtures=self._self_context_fixture_names,
@@ -334,35 +369,33 @@ class RecordingSpec(wrapt.ObjectProxy):
                     objects=context_objects,
                 ),
                 trace=[TraceStepModel(**step) for step in self._self_trace_steps],
-            )
-            with open(os.path.join(output_dir, "trace.yaml"), "w") as f:
-                yaml.dump(
-                    trace_model.model_dump(exclude_none=True),
-                    f,
-                    sort_keys=False,
-                    default_flow_style=False,
-                )
-        except Exception as e:
-            print(f"ERROR: Failed to write trace.yaml: {e}")
+            ).model_dump(exclude_none=True),
+        )
 
-        # --- 3. Write config.yaml ---
         if self._self_config_data:
-            try:
-                config_model = ConfigModel(config=self._self_config_data)
-                with open(os.path.join(output_dir, "config.yaml"), "w") as f:
-                    yaml.dump(
-                        config_model.model_dump(), f, sort_keys=False, default_flow_style=False
-                    )
-            except Exception as e:
-                print(f"ERROR: Failed to write config.yaml: {e}")
+            self._self_write_yaml(
+                os.path.join(output_dir, "config.yaml"),
+                ConfigModel(config=self._self_config_data).model_dump(),
+            )
 
-        # --- 4. Write meta.yaml ---
         if self._self_metadata:
-            try:
-                meta_model = MetaModel(meta=self._self_metadata)
-                with open(os.path.join(output_dir, "meta.yaml"), "w") as f:
-                    yaml.dump(meta_model.model_dump(), f, sort_keys=False, default_flow_style=False)
-            except Exception as e:
-                print(f"ERROR: Failed to write meta.yaml: {e}")
+            self._self_write_yaml(
+                os.path.join(output_dir, "meta.yaml"),
+                MetaModel(meta=self._self_metadata).model_dump(),
+            )
 
         print(f"[Trace Recorder] Saved artifacts to {output_dir}")
+
+    def _self_write_ssz(self, path: str, obj: Any) -> None:
+        try:
+            with open(path, "wb") as f:
+                f.write(ssz_serialize(obj))
+        except Exception as e:
+            print(f"ERROR: Failed to write SSZ artifact {path}: {e}")
+
+    def _self_write_yaml(self, path: str, data: Any) -> None:
+        try:
+            with open(path, "w") as f:
+                yaml.dump(data, f, sort_keys=False, default_flow_style=False)
+        except Exception as e:
+            print(f"ERROR: Failed to write YAML {path}: {e}")

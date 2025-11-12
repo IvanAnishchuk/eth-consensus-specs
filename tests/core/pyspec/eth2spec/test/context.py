@@ -927,11 +927,8 @@ def yield_fork_meta(fork_metas: Sequence[ForkMeta]):
 # --- BEGIN SPEC TRACE RECORDER LOGIC ---
 # ---------------------------------------------------------------------
 
-# The default output directory for traces if not specified
 DEFAULT_TRACE_DIR = "traces"
 
-# Fixtures that are common to most tests and should not be part of
-# the auto-generated trace path for parameterized tests.
 TRACE_PATH_EXCLUDED_FIXTURES = {
     "spec",
     "state",
@@ -944,9 +941,7 @@ TRACE_PATH_EXCLUDED_FIXTURES = {
 
 
 def _sanitize_value_for_path(value: Any) -> str:
-    """
-    Converts a test parameter value into a filesystem-friendly string.
-    """
+    """Converts a parameter value into a filesystem-friendly string."""
     if isinstance(value, (int, bool)):
         s_val = str(value)
     elif isinstance(value, str):
@@ -954,178 +949,108 @@ def _sanitize_value_for_path(value: Any) -> str:
     elif isinstance(value, bytes):
         s_val = value.hex()
     elif hasattr(value, "__name__"):
-        # For functions or types passed as parameters
         s_val = value.__name__
     else:
         s_val = str(value)
 
-    # Replace invalid filesystem characters with an underscore
+    # Replace invalid chars
     s_val = re.sub(r'[<>:"/\\|?*]', "_", s_val)
-    # Replace other non-alphanumeric chars with a hyphen
     s_val = re.sub(r"[^a-zA-Z0-9_-]", "-", s_val)
-    # Truncate to a reasonable length
     return s_val[:50]
+
+
+def _get_trace_output_dir(
+    base_output_dir: str | None, fn: Callable, bound_args: inspect.BoundArguments, fork_name: str
+) -> str:
+    """Calculates the output directory path for the trace artifacts."""
+    if base_output_dir:
+        return base_output_dir
+
+    test_module = fn.__module__.split(".")[-1]
+    test_name = fn.__name__
+
+    # Generate a suffix based on test parameters (e.g., param_a=True -> param_a_True)
+    param_parts = []
+    for name, value in bound_args.arguments.items():
+        if name in TRACE_PATH_EXCLUDED_FIXTURES:
+            continue
+        sanitized_val = _sanitize_value_for_path(value)
+        param_parts.append(f"{name}_{sanitized_val}")
+
+    path_segments = [DEFAULT_TRACE_DIR, fork_name, test_module, test_name]
+    if param_parts:
+        path_segments.append("__".join(param_parts))
+
+    return os.path.join(*path_segments)
 
 
 def record_spec_trace(_fn: Callable | None = None, *, output_dir: str | None = None):
     """
-    Decorator factory to wrap a pyspec test and generate a 'trace.yaml'
-    and SSZ artifacts, as described in GitHub issue #4603.
-
-    This decorator robustly finds 'spec' and other fixtures
-    whether they are passed as positional or keyword arguments.
-
-    If `output_dir` is None, a path is automatically generated from
-    the test module, name, and parameters:
-    `traces/<fork_name>/<module_name>/<test_name>/<param_name>_<param_value>/...`
-
-    Usage:
-        @with_all_phases
-        @spec_state_test
-        @record_spec_trace  # Deduces path automatically
-        def test_my_feature(spec, state, param_a=True):
-            ...
-
-        @with_all_phases
-        @spec_state_test
-        @record_spec_trace(output_dir="my_traces/my_test") # Explicit path
-        def test_my_other_feature(spec, state):
-            ...
+    Decorator to wrap a pyspec test and record execution traces.
+    Can be used with or without arguments:
+        @record_spec_trace
+        @record_spec_trace(output_dir="...")
     """
 
-    # This is the actual decorator that takes the test function 'fn'
     def decorator(fn: Callable):
-        # Removed the `if RecordingSpec is None:` check,
-        # as the import is now mandatory.
-
         @functools.wraps(fn)
         def wrapper(*args, **kwargs):
-            # 1. --- Bind arguments ---
-            # Robustly find all test arguments, whether positional or keyword
+            # 1. Bind arguments to find 'spec' and fixtures
             try:
-                sig = inspect.signature(fn)
-                bound_args = sig.bind(*args, **kwargs)
+                bound_args = inspect.signature(fn).bind(*args, **kwargs)
                 bound_args.apply_defaults()
             except TypeError:
-                # Fails during pytest collection or on non-test functions.
-                # Run original function as-is.
+                # Fallback for non-test invocations
                 return fn(*args, **kwargs)
 
-            # 2. --- Find `spec` and initial fixtures ---
-            spec_arg_name = "spec"
-            if spec_arg_name not in bound_args.arguments:
-                # Not a spec test, run as-is
+            if "spec" not in bound_args.arguments:
                 return fn(*args, **kwargs)
 
-            real_spec = bound_args.arguments[spec_arg_name]
+            real_spec = bound_args.arguments["spec"]
 
-            # Find all other arguments to seed the trace context
-            initial_fixtures = {}
-            for name, value in bound_args.arguments.items():
-                if name == spec_arg_name:
-                    continue  # Don't include spec itself
+            # 2. Prepare context for recording
+            initial_fixtures = {
+                k: v
+                for k, v in bound_args.arguments.items()
+                if k != "spec" and (k in NON_SSZ_FIXTURES or CLASS_NAME_MAP.get(type(v).__name__))
+            }
 
-                # Check if it's a known non-SSZ fixture or a trackable SSZ object
-                if name in NON_SSZ_FIXTURES or CLASS_NAME_MAP.get(type(value).__name__):
-                    initial_fixtures[name] = value
-
-            # 3. --- Create and inject proxy ---
-            # --- START MODIFICATION ---
-            # Capture metadata
             metadata = {
                 "fork": real_spec.fork,
                 "preset": real_spec.config.PRESET_BASE,
             }
 
-            # Capture simple parameters (excluding spec and objects)
-            parameters = {}
-            for name, value in bound_args.arguments.items():
-                if isinstance(value, (int, str, bool, type(None))):
-                    parameters[name] = value
+            parameters = {
+                k: v
+                for k, v in bound_args.arguments.items()
+                if isinstance(v, (int, str, bool, type(None)))
+            }
 
+            # 3. Inject the recorder
             recorder = RecordingSpec(
                 real_spec, initial_fixtures, metadata=metadata, parameters=parameters
             )
-            # --- END MODIFICATION ---
+            bound_args.arguments["spec"] = recorder
 
-            # Replace the original 'spec' with the proxied 'recorder'
-            bound_args.arguments[spec_arg_name] = recorder
-
-            # 4. --- Run the test ---
+            # 4. Run test & Save trace
             try:
-                # Run the test using the modified arguments
-                result = fn(*bound_args.args, **bound_args.kwargs)
-                return result
+                return fn(*bound_args.args, **bound_args.kwargs)
             finally:
-                # 5. --- Save the trace ---
-                # This block runs *even if the test fails*
                 try:
-                    # Note: 'output_dir' is from the outer 'record_spec_trace' scope
-                    if output_dir:
-                        trace_artifact_dir = output_dir
-                    else:
-                        # --- MODIFICATION START ---
-                        # Get the fork name from the spec object we bound earlier.
-                        fork_name = real_spec.fork
-                        # --- MODIFICATION END ---
-
-                        # Auto-generate path from test name and parameters
-                        test_module = fn.__module__.split(".")[-1]
-                        test_name = fn.__name__
-
-                        param_parts = []
-                        for name, value in bound_args.arguments.items():
-                            if name in TRACE_PATH_EXCLUDED_FIXTURES:
-                                continue
-                            sanitized_val = _sanitize_value_for_path(value)
-                            param_parts.append(f"{name}_{sanitized_val}")
-
-                        param_str = "__".join(param_parts)
-
-                        if param_str:
-                            trace_artifact_dir = os.path.join(
-                                # --- MODIFICATION START ---
-                                DEFAULT_TRACE_DIR,
-                                fork_name,
-                                test_module,
-                                test_name,
-                                param_str,
-                                # --- MODIFICATION END ---
-                            )
-                        else:
-                            trace_artifact_dir = os.path.join(
-                                # --- MODIFICATION START ---
-                                DEFAULT_TRACE_DIR,
-                                fork_name,
-                                test_module,
-                                test_name,
-                                # --- MODIFICATION END ---
-                            )
-
-                    os.makedirs(trace_artifact_dir, exist_ok=True)
-                    trace_filepath = os.path.join(trace_artifact_dir, "trace")
-
-                    print(f"\n[Trace Recorder] Saving trace for {fn.__name__} to: {trace_filepath}")
-                    recorder.save_trace(trace_filepath)
+                    # Use the *original* spec's fork name for the path
+                    artifact_dir = _get_trace_output_dir(output_dir, fn, bound_args, real_spec.fork)
+                    print(f"\n[Trace Recorder] Saving trace for {fn.__name__} to: {artifact_dir}")
+                    recorder.save_trace(artifact_dir)
                 except Exception as e:
-                    # Print the error but do not re-raise, to avoid
-                    # masking the original test failure (if any).
                     print(f"ERROR: [Trace Recorder] FAILED to save trace for {fn.__name__}: {e}")
 
         return wrapper
 
-    # --- Main entry-point logic for record_spec_trace ---
     if _fn is None:
-        # Case: @record_spec_trace(output_dir="...")
-        # Return the decorator, which will be called by Python with 'fn'
         return decorator
     elif callable(_fn):
-        # Case: @record_spec_trace
-        # We were called directly with 'fn'. Call the decorator ourselves.
-        # 'output_dir' will be its default (None).
         return decorator(_fn)
     else:
-        # This should not be reachable if used as a decorator
         raise TypeError("Invalid use of @record_spec_trace decorator.")
 
 

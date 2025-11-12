@@ -1,7 +1,10 @@
 """
-Pydantic schemas for all test artifacts (trace, config, meta).
-This defines the structure for all generated YAML files, ensuring
-that the test artifacts are valid and machine-readable.
+Trace Models
+------------
+Pydantic models defining the schema for the generated test vector artifacts:
+- trace.yaml: The sequence of operations.
+- config.yaml: The system configuration.
+- meta.yaml: Test metadata.
 """
 
 from typing import Any, TypeAlias
@@ -9,16 +12,15 @@ from typing import Any, TypeAlias
 from pydantic import BaseModel, Field
 from pydantic.types import constr
 
-# --- Trace Model Schemas (from your example) ---
-
-# Regex to match a context variable, e.g., "$context.states.initial"
+# Regex to match a context variable reference, e.g., "$context.states.initial"
 CONTEXT_VAR_REGEX = r"^\$context\.\w+\.\w+$"
 ContextVar: TypeAlias = constr(pattern=CONTEXT_VAR_REGEX)
 
 
 class ContextObjectsModel(BaseModel):
     """
-    Defines the SSZ objects (artifacts) to be loaded.
+    Defines the SSZ objects (artifacts) loaded in the 'context' block.
+    Maps logical names (e.g., 'v0') to filenames (e.g., 'state_root.ssz').
     """
 
     states: dict[str, str] = Field(
@@ -30,30 +32,35 @@ class ContextObjectsModel(BaseModel):
     attestations: dict[str, str] = Field(
         default_factory=dict, description="Map of attestation names to SSZ filenames"
     )
-    # Add other SSZ types here as needed
 
 
 class ContextModel(BaseModel):
-    """Defines the 'context' block of the trace."""
+    """
+    The 'context' block of the trace file.
+    Contains static fixtures, parameters, and references to binary objects.
+    """
 
     fixtures: list[str] = Field(
-        default_factory=list, description="List of non-SSZ fixtures to inject, e.g., 'store'"
+        default_factory=list, description="List of non-SSZ fixtures to inject (e.g. 'store')"
     )
     parameters: dict[str, Any] = Field(
-        default_factory=dict, description="Simple test setup parameters (e.g., validator_count)"
+        default_factory=dict, description="Simple test setup parameters (e.g. validator_count)"
     )
     objects: ContextObjectsModel = Field(default_factory=ContextObjectsModel)
 
 
 class TraceStepModel(BaseModel):
-    """Defines a single step in the 'trace' list."""
+    """
+    A single step in the execution trace.
+    Represents a function call ('op'), its inputs, and its outcome.
+    """
 
-    op: str = Field(..., description="The spec function operation to call, e.g., 'tick'")
+    op: str = Field(..., description="The spec function name, e.g., 'process_slots'")
     params: dict[str, Any] = Field(
-        default_factory=dict, description="Parameters to pass to the operation"
+        default_factory=dict, description="Arguments passed to the function"
     )
     result: Any | None = Field(
-        None, description="The expected result, often a new context var or None"
+        None, description="The return value (context var reference or primitive)"
     )
     error: dict[str, str] | None = Field(
         None, description="Error details if the operation raised an exception"
@@ -61,29 +68,26 @@ class TraceStepModel(BaseModel):
 
 
 class TraceModel(BaseModel):
-    """The root model for the trace.yaml file."""
+    """
+    The root schema for 'trace.yaml'.
+    """
 
     metadata: dict[str, Any] = Field(..., description="Test run metadata (fork, preset, etc.)")
     context: ContextModel
     trace: list[TraceStepModel]
 
 
-# --- Config and Meta Model Schemas ---
-
-
 class ConfigModel(BaseModel):
     """
-    The root model for the config.yaml file.
-    We use a simple key-value store.
+    Schema for 'config.yaml'.
     """
 
-    config: dict[str, Any] = Field(..., description="A dictionary of config variables.")
+    config: dict[str, Any] = Field(..., description="Dictionary of config constants")
 
 
 class MetaModel(BaseModel):
     """
-    The root model for the meta.yaml file.
-    We use a simple key-value store.
+    Schema for 'meta.yaml'.
     """
 
-    meta: dict[str, Any] = Field(..., description="A dictionary of metadata key/value pairs.")
+    meta: dict[str, Any] = Field(..., description="Dictionary of metadata key/value pairs")
