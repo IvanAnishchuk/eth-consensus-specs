@@ -229,11 +229,24 @@ class RecordingSpec(wrapt.ObjectProxy):
 
                 if old_hash != new_hash:
                     # STATE CHANGED
-                    load_state_step["result"] = self._serialize_arg(state_obj, auto_artifact=True)
+                    # Force a new version name for this object ID
+                    # We pass 'force_new_version=True' to _serialize_arg logic (simulated here)
+                    
+                    # 1. Generate new name
+                    count = self._self_obj_counter.get("states", 0)
+                    new_name = cast(ContextVar, f"$context.states.v{count}")
+                    self._self_obj_counter["states"] = count + 1
+                    
+                    # 2. Update mapping for this object ID
+                    self._self_obj_to_name_map[old_id] = new_name
+                    
+                    # 3. Register artifact
+                    filename = f"states_v{count}.ssz"
+                    self._self_name_to_obj_map[new_name] = state_obj
+                    self._self_auto_artifacts[filename] = state_obj
+
+                    load_state_step["result"] = new_name
                     self._self_trace_steps.append(load_state_step)
-                else:
-                    # STATE NOT CHANGED
-                    load_state_step["result"] = old_state_name
 
             return result
 
