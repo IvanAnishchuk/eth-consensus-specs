@@ -251,16 +251,16 @@ class RecordingSpec(wrapt.ObjectProxy):
         """
         # Handle primitives and ensure they are standard Python types
         # (not subclasses like Slot, ValidatorIndex, etc.)
+        if arg is None:
+            return None
         if isinstance(arg, bool):
             return bool(arg)
         if isinstance(arg, int):
             return int(arg)
         if isinstance(arg, str):
             return str(arg)
-        if isinstance(arg, type(None)):
-            return None
         if isinstance(arg, bytes):
-            return bytes(arg)
+            return "0x" + arg.hex()
         if isinstance(arg, Sized) and not isinstance(arg, Container):
             return arg
 
