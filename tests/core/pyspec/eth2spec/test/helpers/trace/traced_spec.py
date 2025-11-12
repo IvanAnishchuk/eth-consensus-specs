@@ -212,10 +212,7 @@ class RecordingSpec(wrapt.ObjectProxy):
             # Handle new objects returned
             # if result and (not state_obj or id(result) != id(state_obj)):
             if True:
-                if isinstance(result, Container):
-                    step["result"] = self._serialize_arg(result, auto_artifact=True)
-                elif isinstance(result, (int, str, bool, bytes, type(None))):
-                    step["result"] = result
+                step["result"] = self._serialize_arg(result, auto_artifact=True)
 
             self._self_trace_steps.append(step)
 
