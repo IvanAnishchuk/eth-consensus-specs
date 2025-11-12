@@ -1,7 +1,7 @@
 from eth2spec.test.context import (
+    record_spec_trace,
     spec_state_test,
     with_all_phases,
-    record_spec_trace,
 )
 from eth2spec.test.helpers.forks import (
     is_post_capella,

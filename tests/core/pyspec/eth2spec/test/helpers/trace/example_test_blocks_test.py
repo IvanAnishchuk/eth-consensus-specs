@@ -1,6 +1,7 @@
 import random
 
 from eth2spec.test.context import (
+    record_spec_trace,
     spec_state_test,
     with_all_phases_from_to,
 )
@@ -23,10 +24,6 @@ from eth2spec.test.helpers.state import (
     state_transition_and_sign_block,
 )
 
-from eth2spec.test.context import (
-    record_spec_trace,
-    with_all_phases,
-)
 
 def linear_run_block_with_blobs(
     spec,
@@ -96,9 +93,7 @@ def test_e_one_blob_two_txs(spec, state):
 @spec_state_test
 @record_spec_trace
 def test_e_one_blob_max_txs(spec, state):
-    linear_run_block_with_blobs(
-        spec, state, blob_count=1, tx_count=get_max_blob_count(spec, state)
-    )
+    linear_run_block_with_blobs(spec, state, blob_count=1, tx_count=get_max_blob_count(spec, state))
 
 
 @with_all_phases_from_to(DENEB, GLOAS)

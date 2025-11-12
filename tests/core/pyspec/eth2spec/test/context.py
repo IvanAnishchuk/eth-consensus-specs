@@ -15,7 +15,6 @@ import pytest
 from frozendict import frozendict
 from lru import LRU
 
-import eth2spec
 from eth2spec.utils import bls
 from tests.infra.yield_generator import vector_test
 

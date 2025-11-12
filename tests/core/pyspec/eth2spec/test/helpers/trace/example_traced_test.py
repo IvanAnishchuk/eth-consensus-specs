@@ -58,6 +58,7 @@ def test_example_block_processing(spec, state):
     # This state is now at slot 1
     spec.ssz("post_state.ssz", state)
 
+
 @with_gloas_and_later
 @spec_state_test
 @record_spec_trace
@@ -76,7 +77,7 @@ def test_example_execution_payload_availability_reset_from_set(spec, state):
 
     spec.ssz("pre_state.ssz", state)
     spec.ssz("slots.ssz", 1)
-    #yield "slots", 1  # XXX not sure about this one, need to trace how yilding works
+    # yield "slots", 1  # XXX not sure about this one, need to trace how yilding works
 
     # Process one slot
     spec.process_slots(state, state.slot + 1)

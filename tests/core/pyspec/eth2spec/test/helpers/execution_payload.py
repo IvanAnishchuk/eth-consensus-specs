@@ -366,9 +366,9 @@ def build_empty_execution_payload(spec, state, randao_mix=None):
         latest = state.latest_execution_payload_header
         parent_hash = latest.block_hash
     timestamp = spec.compute_time_at_slot(state, state.slot)
-    #print('xxxxxxd')
-    #print(f'{type(spec.List)} {spec.List.__class__} {spec.List.__name__}')
-    #print('xxxxxxd')
+    # print('xxxxxxd')
+    # print(f'{type(spec.List)} {spec.List.__class__} {spec.List.__name__}')
+    # print('xxxxxxd')
     empty_txs = spec.List[spec.Transaction, spec.MAX_TRANSACTIONS_PER_PAYLOAD]()
 
     if randao_mix is None:

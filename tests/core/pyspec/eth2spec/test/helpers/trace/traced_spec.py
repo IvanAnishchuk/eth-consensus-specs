@@ -18,10 +18,9 @@ from typing import Any, cast
 
 import wrapt
 import yaml
-
-from eth2spec.utils.ssz.ssz_impl import serialize as ssz_serialize
 from remerkleable.complex import Container
 
+from eth2spec.utils.ssz.ssz_impl import serialize as ssz_serialize
 
 # Import all Pydantic models for artifact generation
 from .trace_models import (
@@ -220,10 +219,6 @@ class RecordingSpec(wrapt.ObjectProxy):
             # TODO: this should be a separate thing: we need to record both result and state change
             if state_obj and isinstance(state_obj, Container):
                 new_hash = state_obj.hash_tree_root()
-                if old_id is not None:
-                    old_state_name = self._self_obj_to_name_map.get(old_id)
-                else:
-                    old_state_name = None
 
                 load_state_step: dict[str, Any] = {"op": "load_state", "params": {}}
 
@@ -231,15 +226,15 @@ class RecordingSpec(wrapt.ObjectProxy):
                     # STATE CHANGED
                     # Force a new version name for this object ID
                     # We pass 'force_new_version=True' to _serialize_arg logic (simulated here)
-                    
+
                     # 1. Generate new name
                     count = self._self_obj_counter.get("states", 0)
                     new_name = cast(ContextVar, f"$context.states.v{count}")
                     self._self_obj_counter["states"] = count + 1
-                    
+
                     # 2. Update mapping for this object ID
                     self._self_obj_to_name_map[old_id] = new_name
-                    
+
                     # 3. Register artifact
                     filename = f"states_v{count}.ssz"
                     self._self_name_to_obj_map[new_name] = state_obj
@@ -366,7 +361,12 @@ class RecordingSpec(wrapt.ObjectProxy):
                 trace=[TraceStepModel(**step) for step in self._self_trace_steps],
             )
             with open(os.path.join(output_dir, "trace.yaml"), "w") as f:
-                yaml.dump(trace_model.model_dump(exclude_none=True), f, sort_keys=False, default_flow_style=False)
+                yaml.dump(
+                    trace_model.model_dump(exclude_none=True),
+                    f,
+                    sort_keys=False,
+                    default_flow_style=False,
+                )
         except Exception as e:
             print(f"ERROR: Failed to write trace.yaml: {e}")
 

@@ -1,6 +1,7 @@
 from random import Random
 
 from eth2spec.test.context import (
+    record_spec_trace,
     spec_state_test,
     with_all_phases_from_to,
 )
@@ -13,20 +14,18 @@ from eth2spec.test.helpers.fork_choice import (
     BlobData,
     get_genesis_forkchoice_store_and_block,
     on_tick_and_append_step,
-    tick_and_add_block_with_data,
     tick_and_add_block,
+    tick_and_add_block_with_data,
     with_blob_data,
 )
 from eth2spec.test.helpers.state import (
     state_transition_and_sign_block,
 )
-from eth2spec.test.context import (
-    record_spec_trace,
-    with_all_phases,
-)
 
 
-def linear_tick_and_add_block_with_data(spec, store, signed_block, test_steps, blob_data, valid=True):
+def linear_tick_and_add_block_with_data(
+    spec, store, signed_block, test_steps, blob_data, valid=True
+):
     def run_func():
         return tick_and_add_block(
             spec, store, signed_block, test_steps, blob_data=blob_data, valid=valid
@@ -34,8 +33,9 @@ def linear_tick_and_add_block_with_data(spec, store, signed_block, test_steps, b
 
     with_blob_data(spec, blob_data, run_func)
 
+
 @with_all_phases_from_to(DENEB, FULU)
-#@with_all_phases
+# @with_all_phases
 @spec_state_test
 @record_spec_trace
 def test_example_test_simple_blob_data(spec, state):
@@ -56,11 +56,11 @@ def test_example_test_simple_blob_data(spec, state):
     signed_block = state_transition_and_sign_block(spec, state, block)
     blob_data = BlobData(blobs, blob_kzg_proofs)
 
-    #print('WTF????')
-    #print(repr(spec.get_head(store)), repr(signed_block.message.hash_tree_root()))
+    # print('WTF????')
+    # print(repr(spec.get_head(store)), repr(signed_block.message.hash_tree_root()))
 
     yield from tick_and_add_block_with_data(spec, store, signed_block, test_steps, blob_data)
-    #print(spec.get_head(store), signed_block.message.hash_tree_root())
+    # print(spec.get_head(store), signed_block.message.hash_tree_root())
 
     assert spec.get_head(store) == signed_block.message.hash_tree_root()
 
@@ -68,17 +68,17 @@ def test_example_test_simple_blob_data(spec, state):
     block, blobs, _, blob_kzg_proofs = get_block_with_blob(spec, state, rng=rng)
     signed_block = state_transition_and_sign_block(spec, state, block)
     blob_data = BlobData(blobs, blob_kzg_proofs)
-    
 
     yield from tick_and_add_block_with_data(spec, store, signed_block, test_steps, blob_data)
 
-    #print(spec.get_head(store), signed_block.message.hash_tree_root())
+    # print(spec.get_head(store), signed_block.message.hash_tree_root())
 
     assert spec.get_head(store) == signed_block.message.hash_tree_root()
 
     spec.ssz("steps.ssz", test_steps)
     spec.ssz("post_state.ssz", state)
     assert False
+
 
 """
 @with_all_phases_from_to(DENEB, FULU)
