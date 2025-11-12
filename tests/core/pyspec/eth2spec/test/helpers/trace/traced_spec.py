@@ -228,19 +228,20 @@ class RecordingSpec(wrapt.ObjectProxy):
                     # We pass 'force_new_version=True' to _serialize_arg logic (simulated here)
 
                     # 1. Generate new name
-                    count = self._self_obj_counter.get("states", 0)
-                    new_name = cast(ContextVar, f"$context.states.v{count}")
-                    self._self_obj_counter["states"] = count + 1
 
-                    # 2. Update mapping for this object ID
+                    # Use new hash for name
+                    root_hex = new_hash.hex()
+                    new_name = cast(ContextVar, f"$context.states.{root_hex}")
+
                     self._self_obj_to_name_map[old_id] = new_name
 
-                    # 3. Register artifact
-                    filename = f"states_v{count}.ssz"
+                    # Register artifact
+                    filename = f"states_{root_hex}.ssz"
                     self._self_name_to_obj_map[new_name] = state_obj
                     self._self_auto_artifacts[filename] = state_obj
 
                     load_state_step["result"] = new_name
+
                     self._self_trace_steps.append(load_state_step)
 
             return result
@@ -283,17 +284,20 @@ class RecordingSpec(wrapt.ObjectProxy):
 
         if preferred_name:
             if obj_type == "states":
-                name = cast(ContextVar, "$context.states.initial")
-                filename = "state_v0.ssz"
+                root_hex = cast_arg.hash_tree_root().hex()
+                name = cast(ContextVar, f"$context.{obj_type}.{root_hex}")
+                filename = f"{obj_type}_{root_hex}.ssz"
             else:
                 name = cast(ContextVar, f"$context.{obj_type}.{preferred_name}")
                 filename = f"{obj_type}_{preferred_name}.ssz"
+        elif obj_type == "states":
+            root_hex = cast_arg.hash_tree_root().hex()
+            name = cast(ContextVar, f"$context.{obj_type}.{root_hex}")
+            filename = f"{obj_type}_{root_hex}.ssz"
         else:
             count = self._self_obj_counter.get(obj_type, 0)
-            # Use 'v' for states (versions), 'b' for blocks/others (created)
-            prefix = "v" if obj_type == "states" else "b"
-            name = cast(ContextVar, f"$context.{obj_type}.{prefix}{count}")
-            filename = f"{obj_type}_{prefix}{count}.ssz"
+            name = cast(ContextVar, f"$context.{obj_type}.b{count}")
+            filename = f"{obj_type}_b{count}.ssz"
             self._self_obj_counter[obj_type] = count + 1
 
         self._self_obj_to_name_map[arg_id] = name
