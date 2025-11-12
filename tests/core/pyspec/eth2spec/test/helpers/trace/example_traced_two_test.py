@@ -20,14 +20,12 @@ def test_linear_sanity_slots(spec, state):
     This demonstrates the simplest possible state transition.
     """
     # 1. Register the pre-state
-    spec.ssz("pre_state.ssz", state)
+    spec.ssz("pre_state", state)
 
     # 2. Advance the state by one slot
     # We must re-assign the `state` variable, as `process_slot`
     # is a pure function that returns a new, modified state.
     spec.process_slot(state)
-    # FIXME: I think this is too simple, the state is not actually modified?
-    # at least the ssz files are identical, so maybe we need to do something else here?
 
     # 3. Register the post-state
-    spec.ssz("post_state.ssz", state)
+    spec.ssz("post_state", state)

@@ -11,7 +11,7 @@ It provides explicit methods to replace the old `yield` system:
 All other calls to `spec.function(...)` are auto-recorded as trace steps.
 """
 
-import inspect  # <--- ADDED
+import inspect
 import os
 from collections.abc import Sized
 from typing import Any, cast
@@ -33,11 +33,9 @@ from .trace_models import (
     TraceStepModel,
 )
 
-# --- Type Maps (from your context) ---
+# --- Type Maps ---
 # These maps tell the recorder which classes are SSZ-serializable
 # and what their 'type' name is in the YAML context.
-# NOTE: In a real implementation, these would be imported from a central
-# definitions file, not re-defined here.
 CLASS_NAME_MAP: dict[str, str] = {
     "BeaconState": "states",
     "BeaconBlock": "blocks",
@@ -49,7 +47,6 @@ NON_SSZ_FIXTURES: set[str] = {
     "store",
     # Add other non-SSZ fixtures to be tracked
 }
-# --- End Type Maps ---
 
 
 class RecordingSpec(wrapt.ObjectProxy):
@@ -123,8 +120,6 @@ class RecordingSpec(wrapt.ObjectProxy):
         Note: The object's context name is automatically derived.
         """
         step: dict[str, Any] = {"op": "ssz", "params": {"name": name}}
-        if not name.endswith(".ssz"):
-            raise ValueError(f"SSZ filename must end with .ssz, got: {name}")
 
         # Serialize the object to give it a context name
         self._serialize_arg(ssz_object)
@@ -149,9 +144,8 @@ class RecordingSpec(wrapt.ObjectProxy):
         # 2. Get the real attribute from the wrapped 'spec'
         real_attr = super().__getattr__(name)
 
-        # print(f'{name} ')
         if not name.islower():
-            # this is weird but types like List are functions, not classes here, need to just return them
+            # types like List are functions, not classes here, need to just return them
             return real_attr
 
         if not callable(real_attr) or name.startswith("_"):
@@ -163,7 +157,7 @@ class RecordingSpec(wrapt.ObjectProxy):
             Intercepts the function call, records it,
             detects state changes, and then executes the real function.
             """
-            # --- CHANGED: Use inspect to bind args/kwargs to parameter names ---
+            # Bind args/kwargs to parameter names
             sig = inspect.signature(real_attr)
             bound_args = sig.bind(*args, **kwargs)
             bound_args.apply_defaults()
@@ -173,11 +167,9 @@ class RecordingSpec(wrapt.ObjectProxy):
                 serial_params[param_name] = self._serialize_arg(param_value)
 
             step: dict[str, Any] = {"op": name, "params": serial_params}
-            # ------------------------------------------------------------------
 
-            # --- BUG FIX: Find the state object in args or kwargs ---
+            # Find the state object in args or kwargs
             state_obj = None
-            # print(args, kwargs)
             if "state" in kwargs:
                 state_obj = kwargs["state"]
             elif (
@@ -185,12 +177,7 @@ class RecordingSpec(wrapt.ObjectProxy):
                 and isinstance(args[0], Container)
                 and type(args[0]).__name__ == "BeaconState"
             ):
-                # Assume state is the first positional arg if it's a BeaconState
                 state_obj = args[0]
-                # FIXME it's almost never the first arg
-            # --- END BUG FIX ---
-
-            # FIXME: something is wrong here, state is always recorded the same
 
             old_hash: bytes | None = None
             old_id: int | None = None
@@ -198,8 +185,7 @@ class RecordingSpec(wrapt.ObjectProxy):
                 old_hash = state_obj.hash_tree_root()
                 old_id = id(state_obj)
 
-            # --- Execute the real function ---
-            # (With Patch 2 Exception handling included)
+            # Execute the real function
             try:
                 result = real_attr(*args, **kwargs)
             except Exception as e:
@@ -208,40 +194,28 @@ class RecordingSpec(wrapt.ObjectProxy):
                 self._self_trace_steps.append(step)
                 raise e
 
-            # Handle new objects returned
-            # if result and (not state_obj or id(result) != id(state_obj)):
-            if True:
-                step["result"] = self._serialize_arg(result, auto_artifact=True)
-
+            # Serialize result
+            step["result"] = self._serialize_arg(result, auto_artifact=True)
             self._self_trace_steps.append(step)
 
             # Handle state mutation
-            # TODO: this should be a separate thing: we need to record both result and state change
             if state_obj and isinstance(state_obj, Container):
                 new_hash = state_obj.hash_tree_root()
-
                 load_state_step: dict[str, Any] = {"op": "load_state", "params": {}}
 
                 if old_hash != new_hash:
-                    # STATE CHANGED
-                    # Force a new version name for this object ID
-                    # We pass 'force_new_version=True' to _serialize_arg logic (simulated here)
-
-                    # 1. Generate new name
-
-                    # Use new hash for name
+                    # STATE CHANGED - Generate new name using root hash
                     root_hex = new_hash.hex()
                     new_name = cast(ContextVar, f"$context.states.{root_hex}")
 
                     self._self_obj_to_name_map[old_id] = new_name
 
                     # Register artifact
-                    filename = f"states_{root_hex}.ssz"
+                    filename = f"state_{root_hex}.ssz"
                     self._self_name_to_obj_map[new_name] = state_obj
                     self._self_auto_artifacts[filename] = state_obj
 
                     load_state_step["result"] = new_name
-
                     self._self_trace_steps.append(load_state_step)
 
             return result
@@ -285,20 +259,21 @@ class RecordingSpec(wrapt.ObjectProxy):
         if preferred_name:
             if obj_type == "states":
                 root_hex = cast_arg.hash_tree_root().hex()
-                name = cast(ContextVar, f"$context.{obj_type}.{root_hex}")
-                filename = f"{obj_type}_{root_hex}.ssz"
+                name = cast(ContextVar, f"$context.states.{root_hex}")
+                filename = f"state_{root_hex}.ssz"
             else:
                 name = cast(ContextVar, f"$context.{obj_type}.{preferred_name}")
                 filename = f"{obj_type}_{preferred_name}.ssz"
-        elif obj_type == "states":
-            root_hex = cast_arg.hash_tree_root().hex()
-            name = cast(ContextVar, f"$context.{obj_type}.{root_hex}")
-            filename = f"{obj_type}_{root_hex}.ssz"
         else:
-            count = self._self_obj_counter.get(obj_type, 0)
-            name = cast(ContextVar, f"$context.{obj_type}.b{count}")
-            filename = f"{obj_type}_b{count}.ssz"
-            self._self_obj_counter[obj_type] = count + 1
+            if obj_type == "states":
+                root_hex = cast_arg.hash_tree_root().hex()
+                name = cast(ContextVar, f"$context.{obj_type}.{root_hex}")
+                filename = f"{obj_type}_{root_hex}.ssz"
+            else:
+                count = self._self_obj_counter.get(obj_type, 0)
+                name = cast(ContextVar, f"$context.{obj_type}.b{count}")
+                filename = f"{obj_type}_b{count}.ssz"
+                self._self_obj_counter[obj_type] = count + 1
 
         self._self_obj_to_name_map[arg_id] = name
         self._self_name_to_obj_map[name] = cast_arg
@@ -313,7 +288,6 @@ class RecordingSpec(wrapt.ObjectProxy):
         """
         Saves all recorded data (trace, configure, meta, ssz)
         to the specified output directory.
-        This is called by the `@traced_test` decorator.
         """
         os.makedirs(output_dir, exist_ok=True)
 
@@ -321,16 +295,11 @@ class RecordingSpec(wrapt.ObjectProxy):
         context_objects = ContextObjectsModel()
 
         # Merge auto-artifacts and manual SSZ artifacts
-        # Manual artifacts (`spec.ssz()`) take precedence
         all_artifacts = {**self._self_auto_artifacts, **self._self_artifacts_to_write}
 
         for filename, obj in all_artifacts.items():
-            # Get the object's context name (e.g., "initial", "b0", "v1")
             obj_id = id(obj)
             if obj_id not in self._self_obj_to_name_map:
-                print(
-                    f"WARNING: SSZ object for {filename} was never used in trace, skipping context."
-                )
                 continue
 
             context_name = self._self_obj_to_name_map[obj_id].split(".")[-1]
@@ -345,11 +314,8 @@ class RecordingSpec(wrapt.ObjectProxy):
 
             artifact_path = os.path.join(output_dir, filename)
             try:
-                # Use the object's own .serialize() method
                 with open(artifact_path, "wb") as f:
                     f.write(ssz_serialize(obj))
-            except AttributeError:
-                print(f"ERROR: Object for {filename} is not SSZ-serializable (no .serialize())")
             except Exception as e:
                 print(f"ERROR: Failed to write SSZ artifact {filename}: {e}")
 
