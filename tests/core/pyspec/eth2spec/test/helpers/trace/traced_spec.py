@@ -264,16 +264,15 @@ class RecordingSpec(wrapt.ObjectProxy):
             else:
                 name = cast(ContextVar, f"$context.{obj_type}.{preferred_name}")
                 filename = f"{obj_type}_{preferred_name}.ssz"
+        elif obj_type == "states":
+            root_hex = cast_arg.hash_tree_root().hex()
+            name = cast(ContextVar, f"$context.{obj_type}.{root_hex}")
+            filename = f"{obj_type}_{root_hex}.ssz"
         else:
-            if obj_type == "states":
-                root_hex = cast_arg.hash_tree_root().hex()
-                name = cast(ContextVar, f"$context.{obj_type}.{root_hex}")
-                filename = f"{obj_type}_{root_hex}.ssz"
-            else:
-                count = self._self_obj_counter.get(obj_type, 0)
-                name = cast(ContextVar, f"$context.{obj_type}.b{count}")
-                filename = f"{obj_type}_b{count}.ssz"
-                self._self_obj_counter[obj_type] = count + 1
+            count = self._self_obj_counter.get(obj_type, 0)
+            name = cast(ContextVar, f"$context.{obj_type}.b{count}")
+            filename = f"{obj_type}_b{count}.ssz"
+            self._self_obj_counter[obj_type] = count + 1
 
         self._self_obj_to_name_map[arg_id] = name
         self._self_name_to_obj_map[name] = cast_arg

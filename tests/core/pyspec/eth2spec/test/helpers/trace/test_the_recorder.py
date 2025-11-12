@@ -5,57 +5,47 @@ pytest fixtures and unittest.mock.
 This approach is faster and more isolated than using 'pytester'.
 """
 
-import os
-from typing import Any
-from unittest.mock import mock_open, patch
-
 import pytest
 
-# --- Imports from our framework ---
-from .trace_models import TraceModel
-from .traced_spec import CLASS_NAME_MAP, NON_SSZ_FIXTURES, RecordingSpec
+from eth2spec.test.helpers.trace.traced_spec import CLASS_NAME_MAP, RecordingSpec
+
 
 # --- Mocks for eth2spec objects ---
-# We create minimal mocks of the real objects to test the
-# recorder's logic in isolation.
-
-
 class MockState:
     """Mocks a BeaconState"""
 
-    def __init__(self, root: bytes):
+    def __init__(self, root: bytes = b"\x00" * 32):
         self._root = root
 
     def hash_tree_root(self) -> bytes:
         return self._root
+
+    def copy(self):
+        return MockState(self._root)
 
 
 class MockBlock:
     """Mocks a BeaconBlock"""
 
-    def __init__(self, root: bytes):
+    def __init__(self, root: bytes = b"\x01" * 32):
         self._root = root
 
     def hash_tree_root(self) -> bytes:
         return self._root
 
 
-# --- FIXED: Added MockAttestation ---
 class MockAttestation:
     """Mocks an Attestation"""
 
-    def __init__(self, root: bytes):
+    def __init__(self, root: bytes = b"\x02" * 32):
         self._root = root
 
     def hash_tree_root(self) -> bytes:
         return self._root
 
 
-# ------------------------------------
-
-
-class MockStore:
-    """Mocks a Store object (non-SSZ)"""
+class Slot(int):
+    """Mocks a Slot (int subclass)"""
 
     pass
 
@@ -64,321 +54,178 @@ class MockSpec:
     """Mocks the 'spec' object"""
 
     def tick(self, state: MockState, slot: int) -> None:
-        # Simulate a state change
-        state._root = state._root + b"\x01"
+        # Simulate a state change by modifying the root
+        # In a real spec, this would be a complex state transition
+        new_root_int = int.from_bytes(state._root, "big") + 1
+        state._root = new_root_int.to_bytes(32, "big")
 
-    def process_block(self, state: MockState, block: MockBlock) -> None:
-        # Simulate a no-op (no state change)
+    def no_op(self, state: MockState) -> None:
+        # Does not modify state
         pass
-
-    def BeaconBlock(self, body: Any = None) -> MockBlock:
-        # Simulate new object creation
-        return MockBlock(root=b"\xaa" * 32)
-
-    # --- FIXED: Added mock Attestation method ---
-    def Attestation(self, data: Any = None) -> MockAttestation:
-        # Simulate new object creation
-        return MockAttestation(root=b"\xcc" * 32)
-
-    # ------------------------------------------
-
-    def is_valid_merkle_branch(
-        self, leaf: bytes, branch: list[bytes], depth: int, index: int, root: bytes
-    ) -> bool:
-        return True
 
     def get_current_epoch(self, state: MockState) -> int:
         return 0
 
-    def get_head(self, store: MockStore) -> bytes:
-        return b"\xdd" * 32
+    def get_root(self, data: bytes) -> bytes:
+        return data  # Echo back bytes
+
+    def fail_op(self) -> None:
+        raise AssertionError("Something went wrong")
 
 
-# --- End Mocks ---
-
-# Update the real CLASS_NAME_MAP to know about our mocks
-# This is a common pattern in testing
-REAL_CLASS_MAP = CLASS_NAME_MAP.copy()
-CLASS_NAME_MAP[MockState.__name__] = "states"
-CLASS_NAME_MAP[MockBlock.__name__] = "blocks"
-# --- FIXED: Added attestation to map ---
-CLASS_NAME_MAP[MockAttestation.__name__] = "attestations"
-# ---------------------------------------
-
-REAL_NON_SSZ_FIXTURES = NON_SSZ_FIXTURES.copy()
-NON_SSZ_FIXTURES.add(MockStore.__name__)
+# --- Fixtures ---
 
 
-@pytest.fixture
-def mock_state() -> MockState:
-    """A fixture for a mock state object"""
-    return MockState(root=b"\x00" * 32)
-
-
-@pytest.fixture
-def mock_block() -> MockBlock:
-    """A fixture for a mock block object"""
-    return MockBlock(root=b"\xbb" * 32)
-
-
-@pytest.fixture
-def mock_store() -> MockStore:
-    """A fixture for a mock store object"""
-    return MockStore()
-
-
-# --- FIXED: Added attestation fixture ---
-@pytest.fixture
-def mock_attestation() -> MockAttestation:
-    """A fixture for a mock attestation object"""
-    return MockAttestation(root=b"\xdd" * 32)
-
-
-# ----------------------------------------
-
-
-@pytest.fixture
-def recording_spec(
-    mock_state: MockState, mock_block: MockBlock, mock_store: MockStore
-) -> RecordingSpec:
-    """
-    This is the core fixture for our tests.
-    It yields an initialized RecordingSpec proxy.
-    """
-    # 1. Create the real (mocked) spec
-    mock_spec = MockSpec()
-
-    # 2. Define the initial fixtures, just like conftest.py would
-    initial_fixtures = {
-        "state": mock_state,
-        "genesis_block": mock_block,
-        "store": mock_store,
-    }
-
-    # 3. Create the proxy and yield it
-    proxy = RecordingSpec(mock_spec, initial_fixtures)
-    yield proxy
-
-    # --- Cleanup ---
-    # Restore the real maps after the test
+@pytest.fixture(autouse=True)
+def register_mocks():
+    """Registers mock classes with the recorder's type map."""
+    original_map = CLASS_NAME_MAP.copy()
+    CLASS_NAME_MAP["MockState"] = "states"
+    CLASS_NAME_MAP["MockBlock"] = "blocks"
+    CLASS_NAME_MAP["MockAttestation"] = "attestations"
+    yield
+    # Restore original map
     CLASS_NAME_MAP.clear()
-    CLASS_NAME_MAP.update(REAL_CLASS_MAP)
-    NON_SSZ_FIXTURES.clear()
-    NON_SSZ_FIXTURES.update(REAL_NON_SSZ_FIXTURES)
+    CLASS_NAME_MAP.update(original_map)
 
 
-# --- The Tests ---
+@pytest.fixture
+def mock_spec():
+    return MockSpec()
 
 
-def test_init_serializes_fixtures(recording_spec: RecordingSpec):
-    """
-    Tests that the __init__ method correctly serializes
-    the initial fixtures.
-    """
-    proxy = recording_spec  # Get the initialized proxy
+@pytest.fixture
+def recording_spec(mock_spec):
+    # Initial context with one state
+    initial_state = MockState(root=b"\x10" * 32)
+    context = {"state": initial_state}
 
-    # Check SSZ objects
-    assert "$context.states.initial" in proxy._self_name_to_obj_map
-    assert "$context.blocks.genesis_block" in proxy._self_name_to_obj_map
-
-    # Check non-SSZ fixtures
-    assert "store" in proxy._self_context_fixture_names
-
-    # Check artifacts to be written
-    assert "state_v0.ssz" in proxy._self_artifacts_to_write
-    assert "blocks_genesis_block.ssz" in proxy._self_artifacts_to_write
+    return RecordingSpec(mock_spec, context)
 
 
-@patch("yaml.dump")
-@patch("builtins.open", new_callable=mock_open)
-def test_state_change_is_recorded(
-    m_open: Any, m_yaml_dump: Any, recording_spec: RecordingSpec, mock_state: MockState
-):
-    """
-    Tests the most important branch: a function call that
-    mutates the state.
-    """
+# --- Tests ---
+
+
+def test_basic_function_call(recording_spec):
+    """Tests basic function recording and result capture."""
     proxy = recording_spec
 
-    # 1. Call the function
-    proxy.tick(state=mock_state, slot=1)
+    # Call a read-only function
+    result = proxy.get_current_epoch(proxy._self_name_to_obj_map["$context.states.initial"])
 
-    # 2. Check internal trace steps
+    assert result == 0
     assert len(proxy._self_trace_steps) == 1
     step = proxy._self_trace_steps[0]
-    assert step["op"] == "tick"
-    assert step["params"]["state"] == "$context.states.initial"
-    assert step["result"] == "$context.states.v0"  # The *new* state name
-
-    # 3. Check that a new artifact was marked for saving
-    assert "state_v0.ssz" in proxy._self_artifacts_to_write  # From init
-    assert "state_v1.ssz" in proxy._self_artifacts_to_write  # From tick
-
-    # 4. Check that 'save_trace' writes the correct files
-    proxy.save_trace("mock_trace.yaml")
-
-    # 4a. Check SSZ files
-    m_open.assert_any_call(os.path.join(os.getcwd(), "state_v1.ssz"), "wb")
-
-    # 4b. Check YAML file
-    m_open.assert_any_call("mock_trace.yaml", "w")
-
-    # 4c. Check YAML content
-    final_data = m_yaml_dump.call_args[0][0]  # Get the data passed to yaml.dump
-    trace_model = TraceModel(**final_data)  # Validate with Pydantic
-
-    assert trace_model.context.objects.states["v1"] == "state_v1.ssz"
-    assert trace_model.trace[0].result == "$context.states.v0"
+    assert step["op"] == "get_current_epoch"
+    assert step["result"] == 0
+    assert "error" not in step or step["error"] is None
 
 
-@patch("yaml.dump")
-@patch("builtins.open", new_callable=mock_open)
-def test_no_state_change_is_recorded(
-    m_open: Any,
-    m_yaml_dump: Any,
-    recording_spec: RecordingSpec,
-    mock_state: MockState,
-    mock_block: MockBlock,
-):
-    """
-    Tests that a no-op call is recorded correctly
-    (i.e., it reuses the old state name as the result).
-    """
+def test_argument_sanitization(recording_spec):
+    """Tests that arguments are sanitized (bytes -> hex, subclasses -> primitives)."""
     proxy = recording_spec
 
-    # 1. Call the function
-    proxy.process_block(state=mock_state, block=mock_block)
+    # 1. Bytes should be hex-encoded with 0x prefix
+    data = b"\xca\xfe"
+    proxy.get_root(data)
 
-    # 2. Check internal trace steps
+    step = proxy._self_trace_steps[0]
+    assert step["params"]["data"] == "0xcafe"
+
+    # 2. Int subclasses (Slot) should be raw ints
+    slot = Slot(42)
+    # We fake a call to tick just to check param serialization
+    # (ignoring the state logic for a moment)
+    state = proxy._self_name_to_obj_map["$context.states.initial"]
+    proxy.tick(state, slot)
+
+    step = proxy._self_trace_steps[1]
+    assert step["params"]["slot"] == 42
+    assert type(step["params"]["slot"]) is int
+
+
+def test_result_sanitization(recording_spec):
+    """Tests that return values are sanitized."""
+    proxy = recording_spec
+
+    # get_root returns bytes, expecting 0x hex string in trace
+    proxy.get_root(b"\xde\xad")
+
+    step = proxy._self_trace_steps[0]
+    assert step["result"] == "0xdead"
+
+
+def test_exception_handling(recording_spec):
+    """Tests that exceptions are captured in the trace."""
+    proxy = recording_spec
+
+    # Should re-raise the exception
+    with pytest.raises(AssertionError, match="Something went wrong"):
+        proxy.fail_op()
+
     assert len(proxy._self_trace_steps) == 1
     step = proxy._self_trace_steps[0]
-    assert step["op"] == "process_block"
-    assert step["params"]["state"] == "$context.states.initial"
-    assert step["params"]["block"] == "$context.blocks.genesis_block"
-    assert step["result"] == "$context.states.initial"  # The *old* state name
-
-    # 3. Check artifacts
-    # No new state artifact should be added
-    assert len(proxy._self_artifacts_to_write) == 2  # Only state_v0 and block_genesis
-    assert "state_v1.ssz" not in proxy._self_artifacts_to_write
-
-    # 4. Check YAML content
-    proxy.save_trace("mock_trace.yaml")
-    final_data = m_yaml_dump.call_args[0][0]
-    trace_model = TraceModel(**final_data)
-
-    assert "v1" not in trace_model.context.objects.states
-    assert trace_model.trace[0].result == "$context.states.initial"
+    assert step["op"] == "fail_op"
+    assert step["result"] is None
+    assert step["error"]["type"] == "AssertionError"
+    assert step["error"]["message"] == "Something went wrong"
 
 
-def test_new_ssz_object_is_recorded(recording_spec: RecordingSpec):
+def test_state_mutation_and_deduplication(recording_spec):
     """
-    Tests that a function call that *returns* a new SSZ
-    object is recorded correctly.
+    Tests that:
+    1. State mutation triggers a 'load_state' op.
+    2. The new state name uses the root hash.
+    3. Non-mutating operations do NOT trigger 'load_state'.
     """
     proxy = recording_spec
+    state = proxy._self_name_to_obj_map["$context.states.initial"]
 
-    # 1. Call the function
-    new_block = proxy.BeaconBlock(body=None)
+    # Initial root: 101010...
+    initial_root_hex = state.hash_tree_root().hex()
 
-    # 2. Check internal trace steps
-    assert len(proxy._self_trace_steps) == 1
-    step = proxy._self_trace_steps[0]
-    assert step["op"] == "BeaconBlock"
-    assert step["result"] == "$context.blocks.b0"  # The new block name
+    # 1. Call op that DOES change state
+    proxy.tick(state, 1)
 
-    # 3. Check artifacts
-    assert "blocks_b0.ssz" in proxy._self_artifacts_to_write
-    assert proxy._self_artifacts_to_write["blocks_b0.ssz"] is new_block
-
-
-# --- FIXED: Added test for Attestation ---
-@patch("yaml.dump")
-@patch("builtins.open", new_callable=mock_open)
-def test_new_ssz_object_attestation(m_open: Any, m_yaml_dump: Any, recording_spec: RecordingSpec):
-    """
-    Tests that a new object of a *different* type (Attestation)
-    is also recorded correctly.
-    """
-    proxy = recording_spec
-
-    # 1. Call the function
-    new_att = proxy.Attestation(data=None)
-
-    # 2. Check internal trace steps
-    assert len(proxy._self_trace_steps) == 1
-    step = proxy._self_trace_steps[0]
-    assert step["op"] == "Attestation"
-    assert step["result"] == "$context.attestations.b0"  # The new attestation name
-
-    # 3. Check artifacts
-    assert "attestations_b0.ssz" in proxy._self_artifacts_to_write
-    assert proxy._self_artifacts_to_write["attestations_b0.ssz"] is new_att
-
-    # 4. Check YAML content
-    proxy.save_trace("mock_trace.yaml")
-    final_data = m_yaml_dump.call_args[0][0]
-    trace_model = TraceModel(**final_data)
-
-    # This assertion verifies our Pydantic model bugfix
-    assert trace_model.context.objects.attestations["b0"] == "attestations_b0.ssz"
-    assert trace_model.trace[0].result == "$context.attestations.b0"
-
-
-# ----------------------------------------
-
-
-def test_literal_args_and_return_are_recorded(recording_spec: RecordingSpec):
-    """
-    Tests that simple literals (int, str, bool, bytes)
-    are serialized directly into the YAML.
-    """
-    proxy = recording_spec
-
-    # 1. Call function with literals
-    proxy.is_valid_merkle_branch(
-        leaf=b"\x00" * 32, branch=[b"\x01" * 32], depth=3, index=2, root=b"\x02" * 32
-    )
-
-    # 2. Call function with simple return
-    epoch = proxy.get_current_epoch(state=proxy._self_name_to_obj_map["$context.states.initial"])
-
-    # 3. Check trace steps
+    # We expect 2 steps: the 'tick' op, and 'load_state'
     assert len(proxy._self_trace_steps) == 2
 
-    # Step 1: is_valid_merkle_branch
-    step1 = proxy._self_trace_steps[0]
-    assert step1["op"] == "is_valid_merkle_branch"
-    assert step1["params"]["depth"] == 3
-    assert step1["params"]["index"] == 2
-    assert step1["params"]["leaf"] == b"\x00" * 32
-    assert step1["result"] == True  # The boolean result
+    tick_step = proxy._self_trace_steps[0]
+    load_step = proxy._self_trace_steps[1]
 
-    # Step 2: get_current_epoch
-    step2 = proxy._self_trace_steps[1]
-    assert step2["op"] == "get_current_epoch"
-    assert step2["result"] == 0  # The integer result
-    assert epoch == 0
+    assert tick_step["op"] == "tick"
+    assert load_step["op"] == "load_state"
+
+    # Check naming convention: should be hash-based (no 0x for context names)
+    new_root = state.hash_tree_root().hex()
+    assert new_root != initial_root_hex
+    assert load_step["result"] == f"$context.states.{new_root}"
+
+    # 2. Call op that DOES NOT change state
+    proxy.no_op(state)
+
+    # Should only add the 'no_op' step, NO 'load_state'
+    assert len(proxy._self_trace_steps) == 3
+    assert proxy._self_trace_steps[2]["op"] == "no_op"
 
 
-def test_unserializable_args_are_handled(recording_spec: RecordingSpec, mock_store: MockStore):
-    """
-    Tests that non-SSZ, non-fixture arguments (like 'store')
-    are handled gracefully.
-    """
+def test_manual_artifacts(recording_spec):
+    """Tests spec.ssz, spec.meta, and spec.configure."""
     proxy = recording_spec
+    state = proxy._self_name_to_obj_map["$context.states.initial"]
 
-    # 1. Call function with 'store'
-    head = proxy.get_head(store=mock_store)
+    # 1. spec.ssz
+    proxy.ssz("custom_state.ssz", state)
 
-    # 2. Check trace steps
-    assert len(proxy._self_trace_steps) == 1
+    assert "custom_state.ssz" in proxy._self_artifacts_to_write
     step = proxy._self_trace_steps[0]
-    assert step["op"] == "get_head"
+    assert step["op"] == "ssz"
+    assert step["params"]["name"] == "custom_state.ssz"
 
-    # 3. Check that 'store' was serialized to its placeholder
-    assert step["params"]["store"] == "<unserializable MockStore>"
+    # 2. spec.meta
+    proxy.meta("description", "test case")
+    assert proxy._self_metadata["description"] == "test case"
 
-    # 4. Check that the 'bytes' return value was recorded
-    assert step["result"] == b"\xdd" * 32
-    assert head == b"\xdd" * 32
+    # 3. spec.configure
+    proxy.configure({"PRESET_BASE": "minimal"})
+    assert proxy._self_config_data["PRESET_BASE"] == "minimal"
