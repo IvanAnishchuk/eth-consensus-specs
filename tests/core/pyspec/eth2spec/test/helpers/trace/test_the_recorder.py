@@ -76,7 +76,7 @@ class MockSpec:
 # --- Fixtures ---
 
 
-@pytest.fixture(autouse=True)
+@pytest.fixture
 def register_mocks():
     """Registers mock classes with the recorder's type map."""
     original_map = CLASS_NAME_MAP.copy()
@@ -95,8 +95,9 @@ def mock_spec():
 
 
 @pytest.fixture
-def recording_spec(mock_spec):
+def recording_spec(mock_spec, register_mocks):
     # Initial context with one state
+    # Root is 101010...
     initial_state = MockState(root=b"\x10" * 32)
     context = {"state": initial_state}
 
@@ -110,8 +111,12 @@ def test_basic_function_call(recording_spec):
     """Tests basic function recording and result capture."""
     proxy = recording_spec
 
-    # Call a read-only function
-    result = proxy.get_current_epoch(proxy._self_name_to_obj_map["$context.states.initial"])
+    # With hash-based naming, we look up by the root hash
+    root_hex = b"\x10" * 32
+    root_hex_str = root_hex.hex()
+    state_name = f"$context.states.{root_hex_str}"
+
+    result = proxy.get_current_epoch(proxy._self_name_to_obj_map[state_name])
 
     assert result == 0
     assert len(proxy._self_trace_steps) == 1
@@ -134,9 +139,12 @@ def test_argument_sanitization(recording_spec):
 
     # 2. Int subclasses (Slot) should be raw ints
     slot = Slot(42)
-    # We fake a call to tick just to check param serialization
-    # (ignoring the state logic for a moment)
-    state = proxy._self_name_to_obj_map["$context.states.initial"]
+
+    root_hex = b"\x10" * 32
+    root_hex_str = root_hex.hex()
+    state_name = f"$context.states.{root_hex_str}"
+    state = proxy._self_name_to_obj_map[state_name]
+
     proxy.tick(state, slot)
 
     step = proxy._self_trace_steps[1]
@@ -179,10 +187,11 @@ def test_state_mutation_and_deduplication(recording_spec):
     3. Non-mutating operations do NOT trigger 'load_state'.
     """
     proxy = recording_spec
-    state = proxy._self_name_to_obj_map["$context.states.initial"]
 
-    # Initial root: 101010...
-    initial_root_hex = state.hash_tree_root().hex()
+    root_hex = b"\x10" * 32
+    root_hex_str = root_hex.hex()
+    state_name = f"$context.states.{root_hex_str}"
+    state = proxy._self_name_to_obj_map[state_name]
 
     # 1. Call op that DOES change state
     proxy.tick(state, 1)
@@ -196,9 +205,9 @@ def test_state_mutation_and_deduplication(recording_spec):
     assert tick_step["op"] == "tick"
     assert load_step["op"] == "load_state"
 
-    # Check naming convention: should be hash-based (no 0x for context names)
+    # Check naming convention: should be hash-based
     new_root = state.hash_tree_root().hex()
-    assert new_root != initial_root_hex
+    assert new_root != root_hex_str
     assert load_step["result"] == f"$context.states.{new_root}"
 
     # 2. Call op that DOES NOT change state
@@ -212,7 +221,11 @@ def test_state_mutation_and_deduplication(recording_spec):
 def test_manual_artifacts(recording_spec):
     """Tests spec.ssz, spec.meta, and spec.configure."""
     proxy = recording_spec
-    state = proxy._self_name_to_obj_map["$context.states.initial"]
+
+    root_hex = b"\x10" * 32
+    root_hex_str = root_hex.hex()
+    state_name = f"$context.states.{root_hex_str}"
+    state = proxy._self_name_to_obj_map[state_name]
 
     # 1. spec.ssz
     proxy.ssz("custom_state.ssz", state)
@@ -221,6 +234,8 @@ def test_manual_artifacts(recording_spec):
     step = proxy._self_trace_steps[0]
     assert step["op"] == "ssz"
     assert step["params"]["name"] == "custom_state.ssz"
+    # Result is the HASH of the state
+    assert step["result"] == state_name
 
     # 2. spec.meta
     proxy.meta("description", "test case")

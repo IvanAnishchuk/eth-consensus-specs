@@ -122,7 +122,7 @@ class RecordingSpec(wrapt.ObjectProxy):
         step: dict[str, Any] = {"op": "ssz", "params": {"name": name}}
 
         # Serialize the object to give it a context name
-        self._serialize_arg(ssz_object)
+        # We use preferred_name=name so the filename matches what was requested
         step["result"] = self._serialize_arg(ssz_object, preferred_name=name)
 
         # Add it to the manual write list
@@ -204,7 +204,8 @@ class RecordingSpec(wrapt.ObjectProxy):
                 load_state_step: dict[str, Any] = {"op": "load_state", "params": {}}
 
                 if old_hash != new_hash:
-                    # STATE CHANGED - Generate new name using root hash
+                    # STATE CHANGED
+                    # Update mapping for this object ID to the NEW hash
                     root_hex = new_hash.hex()
                     new_name = cast(ContextVar, f"$context.states.{root_hex}")
 
@@ -226,21 +227,20 @@ class RecordingSpec(wrapt.ObjectProxy):
         self, arg: Any, preferred_name: str | None = None, auto_artifact: bool = False
     ) -> Any:
         """
-        Turns a Python object into its YAML context name (e.g., "$context.states.v0")
+        Turns a Python object into its YAML context name (e.g., "$context.states.0x...")
         and marks it for artifact saving if it's a new SSZ object.
         """
-        # Handle primitives and ensure they are standard Python types
-        # (not subclasses like Slot, ValidatorIndex, etc.)
-        if arg is None:
-            return None
+        # Handle primitives
         if isinstance(arg, bool):
-            return bool(arg)
+            return arg
         if isinstance(arg, int):
             return int(arg)
         if isinstance(arg, str):
             return str(arg)
         if isinstance(arg, bytes):
             return "0x" + arg.hex()
+        if arg is None:
+            return None
         if isinstance(arg, Sized) and not isinstance(arg, Container):
             return arg
 
@@ -253,21 +253,28 @@ class RecordingSpec(wrapt.ObjectProxy):
         arg_id = id(cast_arg)
         if arg_id in self._self_obj_to_name_map:
             return self._self_obj_to_name_map[arg_id]
+
         obj_type = CLASS_NAME_MAP[class_name]  # e.g., 'blocks'
         filename: str
 
         if preferred_name:
+            # If a specific filename/fixture name was requested
             if obj_type == "states":
+                # For states, we ALWAYS use the hash as the context ID for consistency
                 root_hex = cast_arg.hash_tree_root().hex()
                 name = cast(ContextVar, f"$context.states.{root_hex}")
-                filename = f"state_{root_hex}.ssz"
+                # Use the preferred name for the file (e.g. 'post_state.ssz')
+                filename = (
+                    preferred_name if preferred_name.endswith(".ssz") else f"{preferred_name}.ssz"
+                )
             else:
                 name = cast(ContextVar, f"$context.{obj_type}.{preferred_name}")
                 filename = f"{obj_type}_{preferred_name}.ssz"
+        # Auto-generated name
         elif obj_type == "states":
             root_hex = cast_arg.hash_tree_root().hex()
-            name = cast(ContextVar, f"$context.{obj_type}.{root_hex}")
-            filename = f"{obj_type}_{root_hex}.ssz"
+            name = cast(ContextVar, f"$context.states.{root_hex}")
+            filename = f"state_{root_hex}.ssz"
         else:
             count = self._self_obj_counter.get(obj_type, 0)
             name = cast(ContextVar, f"$context.{obj_type}.b{count}")
@@ -278,7 +285,6 @@ class RecordingSpec(wrapt.ObjectProxy):
         self._self_name_to_obj_map[name] = cast_arg
 
         if auto_artifact or preferred_name:
-            # Add to the *auto* artifact list
             self._self_auto_artifacts[filename] = cast_arg
 
         return name
