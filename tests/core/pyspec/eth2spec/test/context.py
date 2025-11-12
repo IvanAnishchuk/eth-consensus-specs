@@ -45,8 +45,7 @@ from .helpers.specs import (
 
 # --- BEGIN TRACING IMPORTS (PROJECT) ---
 # Import the recorder proxy and models.
-# This is now a hard dependency.
-from .helpers.trace.traced_spec import CLASS_NAME_MAP, NON_SSZ_FIXTURES, RecordingSpec
+from tests.infra.trace.traced_spec import CLASS_NAME_MAP, NON_SSZ_FIXTURES, RecordingSpec
 from .helpers.typing import (
     Spec,
     SpecForks,
