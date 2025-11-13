@@ -16,6 +16,10 @@ from frozendict import frozendict
 from lru import LRU
 
 from eth2spec.utils import bls
+
+# --- BEGIN TRACING IMPORTS (PROJECT) ---
+# Import the recorder proxy and models.
+from tests.infra.trace.traced_spec import CLASS_NAME_MAP, NON_SSZ_FIXTURES, RecordingSpec
 from tests.infra.yield_generator import vector_test
 
 from .exceptions import SkippedTest
@@ -42,10 +46,6 @@ from .helpers.genesis import create_genesis_state
 from .helpers.specs import (
     spec_targets,
 )
-
-# --- BEGIN TRACING IMPORTS (PROJECT) ---
-# Import the recorder proxy and models.
-from tests.infra.trace.traced_spec import CLASS_NAME_MAP, NON_SSZ_FIXTURES, RecordingSpec
 from .helpers.typing import (
     Spec,
     SpecForks,
