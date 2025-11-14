@@ -19,13 +19,7 @@ def test_linear_sanity_slots(spec, state):
     Run a sanity test checking that `process_slot` works.
     This demonstrates the simplest possible state transition.
     """
-    # 1. Register the pre-state
-    spec.ssz("pre_state", state)
-
-    # 2. Advance the state by one slot
+    # Advance the state by one slot
     # We must re-assign the `state` variable, as `process_slot`
     # is a pure function that returns a new, modified state.
     spec.process_slot(state)
-
-    # 3. Register the post-state
-    spec.ssz("post_state", state)

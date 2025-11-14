@@ -15,11 +15,8 @@ import pytest
 from frozendict import frozendict
 from lru import LRU
 
+import eth2spec
 from eth2spec.utils import bls
-
-# --- BEGIN TRACING IMPORTS (PROJECT) ---
-# Import the recorder proxy and models.
-from tests.infra.trace.traced_spec import CLASS_NAME_MAP, NON_SSZ_FIXTURES, RecordingSpec
 from tests.infra.yield_generator import vector_test
 
 from .exceptions import SkippedTest
@@ -46,6 +43,11 @@ from .helpers.genesis import create_genesis_state
 from .helpers.specs import (
     spec_targets,
 )
+
+# --- BEGIN TRACING IMPORTS (PROJECT) ---
+# Import the recorder proxy and models.
+# This is now a hard dependency.
+from tests.infra.trace.traced_spec import CLASS_NAME_MAP, NON_SSZ_FIXTURES, RecordingSpec
 from .helpers.typing import (
     Spec,
     SpecForks,
@@ -958,9 +960,7 @@ def _sanitize_value_for_path(value: Any) -> str:
     return s_val[:50]
 
 
-def _get_trace_output_dir(
-    base_output_dir: str | None, fn: Callable, bound_args: inspect.BoundArguments, fork_name: str
-) -> str:
+def _get_trace_output_dir(base_output_dir: str | None, fn: Callable, bound_args: inspect.BoundArguments, fork_name: str) -> str:
     """Calculates the output directory path for the trace artifacts."""
     if base_output_dir:
         return base_output_dir
@@ -975,11 +975,11 @@ def _get_trace_output_dir(
             continue
         sanitized_val = _sanitize_value_for_path(value)
         param_parts.append(f"{name}_{sanitized_val}")
-
+    
     path_segments = [DEFAULT_TRACE_DIR, fork_name, test_module, test_name]
     if param_parts:
         path_segments.append("__".join(param_parts))
-
+        
     return os.path.join(*path_segments)
 
 
@@ -990,7 +990,7 @@ def record_spec_trace(_fn: Callable | None = None, *, output_dir: str | None = N
         @record_spec_trace
         @record_spec_trace(output_dir="...")
     """
-
+    
     def decorator(fn: Callable):
         @functools.wraps(fn)
         def wrapper(*args, **kwargs):
@@ -1009,19 +1009,17 @@ def record_spec_trace(_fn: Callable | None = None, *, output_dir: str | None = N
 
             # 2. Prepare context for recording
             initial_fixtures = {
-                k: v
-                for k, v in bound_args.arguments.items()
+                k: v for k, v in bound_args.arguments.items()
                 if k != "spec" and (k in NON_SSZ_FIXTURES or CLASS_NAME_MAP.get(type(v).__name__))
             }
-
+            
             metadata = {
                 "fork": real_spec.fork,
                 "preset": real_spec.config.PRESET_BASE,
             }
-
+            
             parameters = {
-                k: v
-                for k, v in bound_args.arguments.items()
+                k: v for k, v in bound_args.arguments.items()
                 if isinstance(v, (int, str, bool, type(None)))
             }
 
@@ -1051,6 +1049,5 @@ def record_spec_trace(_fn: Callable | None = None, *, output_dir: str | None = N
         return decorator(_fn)
     else:
         raise TypeError("Invalid use of @record_spec_trace decorator.")
-
 
 # --- END SPEC TRACE RECORDER LOGIC ---
