@@ -7,11 +7,15 @@ Pydantic models defining the schema for the generated test vector artifacts:
 - meta.yaml: Test metadata.
 """
 
+import os
 from typing import Any, cast, TypeAlias
 
+import yaml
 from pydantic import BaseModel, Field, field_validator, PrivateAttr
 from pydantic.types import constr
 from remerkleable.complex import Container
+
+from eth2spec.utils.ssz.ssz_impl import serialize as ssz_serialize
 
 # --- Configuration ---
 
@@ -126,13 +130,13 @@ class TraceModel(BaseModel):
         """
         if obj is None:
             return None
-        
+
         if not isinstance(obj, Container):
             return None
 
         class_name = type(obj).__name__
         if class_name not in CLASS_NAME_MAP:
-            return None # Unknown object type
+            return None  # Unknown object type
 
         obj_type = CLASS_NAME_MAP[class_name]
         obj_id = id(obj)
@@ -144,7 +148,7 @@ class TraceModel(BaseModel):
             if obj_type == "states":
                 current_root = obj.hash_tree_root().hex()
                 if not existing_name.endswith(f".{current_root}"):
-                    pass # Root changed, re-register with new hash
+                    pass  # Root changed, re-register with new hash
                 else:
                     return existing_name
             else:
@@ -153,11 +157,13 @@ class TraceModel(BaseModel):
         # Generate Name (Content-Addressed)
         root_hex = obj.hash_tree_root().hex()
         context_name = cast(ContextVar, f"$context.{obj_type}.{root_hex}")
-        
+
         filename: str
         if preferred_name:
             # Manual naming (e.g., via fixture)
-            filename = preferred_name if preferred_name.endswith(".ssz") else f"{preferred_name}.ssz"
+            filename = (
+                preferred_name if preferred_name.endswith(".ssz") else f"{preferred_name}.ssz"
+            )
         else:
             # Auto naming (content-addressed)
             filename = f"{obj_type}_{root_hex}.ssz"
@@ -166,12 +172,54 @@ class TraceModel(BaseModel):
         self._obj_to_name[obj_id] = context_name
         self._name_to_obj[context_name] = obj
         self._artifacts[filename] = obj
-        
+
         # Update the public ContextObjectsModel (for output)
         if hasattr(self.context.objects, obj_type):
             getattr(self.context.objects, obj_type)[root_hex] = filename
-        
+
         return context_name
+
+    def dump_to_dir(self, output_dir: str, config: dict[str, Any] = None) -> None:
+        """
+        Writes the trace and all artifacts to the specified directory.
+        """
+        os.makedirs(output_dir, exist_ok=True)
+
+        # 1. Write SSZ artifacts
+        for filename, obj in self._artifacts.items():
+            self._write_ssz(os.path.join(output_dir, filename), obj)
+
+        # 2. Write YAML files
+        self._write_yaml(os.path.join(output_dir, "trace.yaml"), self.model_dump(exclude_none=True))
+
+        if config:
+            self._write_yaml(
+                os.path.join(output_dir, "config.yaml"), ConfigModel(config=config).model_dump()
+            )
+
+        # Write meta.yaml if metadata exists (legacy support/explicit metadata file)
+        if self.metadata:
+            self._write_yaml(
+                os.path.join(output_dir, "meta.yaml"), MetaModel(meta=self.metadata).model_dump()
+            )
+
+        print(f"[Trace Recorder] Saved artifacts to {output_dir}")
+
+    def _write_ssz(self, path: str, obj: Any) -> None:
+        """Helper to write an SSZ object to disk."""
+        try:
+            with open(path, "wb") as f:
+                f.write(ssz_serialize(obj))
+        except Exception as e:
+            print(f"ERROR: Failed to write SSZ artifact {path}: {e}")
+
+    def _write_yaml(self, path: str, data: Any) -> None:
+        """Helper to write data as YAML to disk."""
+        try:
+            with open(path, "w") as f:
+                yaml.dump(data, f, sort_keys=False, default_flow_style=False)
+        except Exception as e:
+            print(f"ERROR: Failed to write YAML {path}: {e}")
 
 
 class ConfigModel(BaseModel):
