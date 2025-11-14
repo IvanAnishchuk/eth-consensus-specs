@@ -11,7 +11,6 @@ It uses `wrapt.ObjectProxy` to intercept function calls, recording their:
 
 import inspect
 import os
-from collections.abc import Sized
 from typing import Any, cast
 
 import wrapt
@@ -21,7 +20,6 @@ from remerkleable.complex import Container
 from eth2spec.utils.ssz.ssz_impl import serialize as ssz_serialize
 
 from .trace_models import (
-    ConfigModel,
     ContextModel,
     ContextObjectsModel,
     ContextVar,
@@ -77,7 +75,7 @@ class RecordingSpec(wrapt.ObjectProxy):
         self._self_obj_to_name_map = {}
         self._self_name_to_obj_map = {}
         self._self_auto_artifacts = {}
-        
+
         self._self_metadata = metadata or {}
         self._self_parameters = parameters or {}
         self._self_last_root = None
@@ -119,34 +117,43 @@ class RecordingSpec(wrapt.ObjectProxy):
 
     def _self_create_wrapper(self, op_name: str, real_func: Any) -> Any:
         """Creates a closure to record the function call."""
-        
+
         def record_wrapper(*args: Any, **kwargs: Any) -> Any:
             # A. Prepare arguments: bind to signature and serialize
             bound_args = self._self_bind_args(real_func, args, kwargs)
-            
+
             # Process arguments and auto-register any NEW SSZ objects as artifacts
             serial_params = {
-                k: self._self_process_arg(v, auto_artifact=True) 
+                k: self._self_process_arg(v, auto_artifact=True)
                 for k, v in bound_args.arguments.items()
             }
 
             # B. Identify State object and handle Context Switching
             state_obj, old_hash, old_id = self._self_capture_pre_state(bound_args)
-            
+
             if old_hash is not None:
                 current_root_hex = old_hash.hex()
                 # If the state passed to this function is different from the last one we saw,
                 # inject a `load_state` operation to switch context.
                 if self._self_last_root != current_root_hex:
-                    # We need the context variable name for this state
-                    # (It should already be registered via _self_process_arg above)
-                    state_var = self._self_obj_to_name_map.get(old_id)
+                    # Handle out-of-band mutation:
+                    # If the object ID maps to a name that doesn't match the current root,
+                    # we must update the mapping and register the new state artifact.
+                    expected_name_suffix = f".{current_root_hex}"
+                    existing_name = self._self_obj_to_name_map.get(old_id)
+
+                    if existing_name is None or not existing_name.endswith(expected_name_suffix):
+                        # Register the state with its current hash
+                        state_var = self._self_process_arg(state_obj, auto_artifact=True)
+                    else:
+                        state_var = existing_name
+
                     if state_var:
-                        self._self_trace_steps.append(TraceStepModel(
-                            op="load_state",
-                            params={},
-                            result=state_var
-                        ).model_dump(exclude_none=True))
+                        self._self_trace_steps.append(
+                            TraceStepModel(op="load_state", params={}, result=state_var).model_dump(
+                                exclude_none=True
+                            )
+                        )
                         self._self_last_root = current_root_hex
 
             # C. Execute the real function
@@ -178,10 +185,12 @@ class RecordingSpec(wrapt.ObjectProxy):
         bound.apply_defaults()
         return bound
 
-    def _self_capture_pre_state(self, bound_args: inspect.BoundArguments) -> tuple[Any, bytes | None, int | None]:
+    def _self_capture_pre_state(
+        self, bound_args: inspect.BoundArguments
+    ) -> tuple[Any, bytes | None, int | None]:
         """Finds the BeaconState argument (if any) and captures its root hash."""
         state_obj = None
-        
+
         # Look for 'state' in arguments
         if "state" in bound_args.arguments:
             state_obj = bound_args.arguments["state"]
@@ -195,23 +204,22 @@ class RecordingSpec(wrapt.ObjectProxy):
         # Use duck typing for hash_tree_root to support Mocks
         if state_obj and hasattr(state_obj, "hash_tree_root"):
             return state_obj, state_obj.hash_tree_root(), id(state_obj)
-        
+
         return None, None, None
 
     def _self_record_step(self, op: str, params: dict, result: Any, error: dict | None) -> None:
         """Appends a step to the trace."""
         # Auto-register the result if it's an SSZ object
-        serialized_result = self._self_process_arg(result, auto_artifact=True) if result is not None else None
-        
-        step_model = TraceStepModel(
-            op=op,
-            params=params,
-            result=serialized_result,
-            error=error
+        serialized_result = (
+            self._self_process_arg(result, auto_artifact=True) if result is not None else None
         )
+
+        step_model = TraceStepModel(op=op, params=params, result=serialized_result, error=error)
         self._self_trace_steps.append(step_model.model_dump(exclude_none=True))
 
-    def _self_update_state_tracker(self, state_obj: Any, old_hash: bytes | None, old_id: int | None) -> None:
+    def _self_update_state_tracker(
+        self, state_obj: Any, old_hash: bytes | None, old_id: int | None
+    ) -> None:
         """Updates the internal state tracker if the state object was mutated."""
         if not hasattr(state_obj, "hash_tree_root") or old_hash is None:
             return
@@ -224,7 +232,7 @@ class RecordingSpec(wrapt.ObjectProxy):
         self._self_last_root = new_root_hex
 
         if old_hash == new_hash:
-            return # No content change
+            return  # No content change
 
         # State changed: calculate new context name based on root hash
         new_name = cast(ContextVar, f"$context.states.{new_root_hex}")
@@ -238,7 +246,7 @@ class RecordingSpec(wrapt.ObjectProxy):
         self._self_name_to_obj_map[new_name] = state_obj
         self._self_auto_artifacts[filename] = state_obj
 
-        # We do NOT record an implicit `load_state` here. 
+        # We do NOT record an implicit `load_state` here.
         # The state was mutated in-place by the operation we just recorded.
         # The trace consumer assumes the result of `op` is the new state.
 
@@ -252,7 +260,7 @@ class RecordingSpec(wrapt.ObjectProxy):
         """
         if arg is None:
             return None
-        
+
         if not isinstance(arg, Container):
             return arg
 
@@ -264,23 +272,34 @@ class RecordingSpec(wrapt.ObjectProxy):
         cast_arg = cast(Container, arg)
         arg_id = id(cast_arg)
 
-        # If we've seen this object exact instance before, return its existing name
-        if arg_id in self._self_obj_to_name_map and not preferred_name:
-            return self._self_obj_to_name_map[arg_id]
-
         # 3. Register New Object
         obj_type = CLASS_NAME_MAP[class_name]  # e.g., 'blocks'
-        
+
+        # If we've seen this object exact instance before, return its existing name
+        if arg_id in self._self_obj_to_name_map and not preferred_name:
+            existing_name = self._self_obj_to_name_map[arg_id]
+            # Special check for states: handle out-of-band mutation
+            # If the hash in the name doesn't match the current root, re-register.
+            if obj_type == "states":
+                current_root = cast_arg.hash_tree_root().hex()
+                if existing_name.endswith(f".{current_root}"):
+                    return existing_name
+                # Fall through to re-register with new hash
+            else:
+                return existing_name
+
         # Always use the content-based hash for the context variable name.
-        # This ensures that even if an object is loaded from 'pre.ssz', it is referred 
+        # This ensures that even if an object is loaded from 'pre.ssz', it is referred
         # to by its hash in the trace, facilitating deduplication.
         root_hex = cast_arg.hash_tree_root().hex()
         name = cast(ContextVar, f"$context.{obj_type}.{root_hex}")
-        
+
         filename: str
         if preferred_name:
             # Manual naming (e.g., via fixture)
-            filename = preferred_name if preferred_name.endswith(".ssz") else f"{preferred_name}.ssz"
+            filename = (
+                preferred_name if preferred_name.endswith(".ssz") else f"{preferred_name}.ssz"
+            )
         else:
             # Auto naming (content-addressed)
             filename = f"{obj_type}_{root_hex}.ssz"
@@ -303,7 +322,7 @@ class RecordingSpec(wrapt.ObjectProxy):
         # 1. Collect all artifacts to write
         # Manual artifacts take precedence over auto-captured ones
         all_artifacts = self._self_auto_artifacts
-        
+
         context_objects = ContextObjectsModel()
 
         for filename, obj in all_artifacts.items():
@@ -333,13 +352,13 @@ class RecordingSpec(wrapt.ObjectProxy):
                     objects=context_objects,
                 ),
                 trace=self._self_trace_steps,
-            ).model_dump(exclude_none=True)
+            ).model_dump(exclude_none=True),
         )
 
         if self._self_metadata:
             self._self_write_yaml(
                 os.path.join(output_dir, "meta.yaml"),
-                MetaModel(meta=self._self_metadata).model_dump()
+                MetaModel(meta=self._self_metadata).model_dump(),
             )
 
         print(f"[Trace Recorder] Saved artifacts to {output_dir}")

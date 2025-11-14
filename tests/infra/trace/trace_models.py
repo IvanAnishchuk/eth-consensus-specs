@@ -7,7 +7,7 @@ Pydantic models defining the schema for the generated test vector artifacts:
 - meta.yaml: Test metadata.
 """
 
-from typing import Any, Dict, List, Optional
+from typing import Any
 
 from pydantic import BaseModel, Field, field_validator
 from pydantic.types import constr
@@ -23,13 +23,13 @@ class ContextObjectsModel(BaseModel):
     Maps logical names (e.g., 'v0') to filenames (e.g., 'state_root.ssz').
     """
 
-    states: Dict[str, str] = Field(
+    states: dict[str, str] = Field(
         default_factory=dict, description="Map of state names to SSZ filenames"
     )
-    blocks: Dict[str, str] = Field(
+    blocks: dict[str, str] = Field(
         default_factory=dict, description="Map of block names to SSZ filenames"
     )
-    attestations: Dict[str, str] = Field(
+    attestations: dict[str, str] = Field(
         default_factory=dict, description="Map of attestation names to SSZ filenames"
     )
 
@@ -40,10 +40,10 @@ class ContextModel(BaseModel):
     Contains static fixtures, parameters, and references to binary objects.
     """
 
-    fixtures: List[str] = Field(
+    fixtures: list[str] = Field(
         default_factory=list, description="List of non-SSZ fixtures to inject (e.g. 'store')"
     )
-    parameters: Dict[str, Any] = Field(
+    parameters: dict[str, Any] = Field(
         default_factory=dict, description="Simple test setup parameters (e.g. validator_count)"
     )
     objects: ContextObjectsModel = Field(default_factory=ContextObjectsModel)
@@ -74,13 +74,13 @@ class TraceStepModel(BaseModel):
     """
 
     op: str = Field(..., description="The spec function name, e.g., 'process_slots'")
-    params: Dict[str, Any] = Field(
+    params: dict[str, Any] = Field(
         default_factory=dict, description="Arguments passed to the function"
     )
-    result: Optional[Any] = Field(
+    result: Any | None = Field(
         None, description="The return value (context var reference or primitive)"
     )
-    error: Optional[Dict[str, str]] = Field(
+    error: dict[str, str] | None = Field(
         None, description="Error details if the operation raised an exception"
     )
 
@@ -95,9 +95,9 @@ class TraceModel(BaseModel):
     The root schema for 'trace.yaml'.
     """
 
-    metadata: Dict[str, Any] = Field(..., description="Test run metadata (fork, preset, etc.)")
+    metadata: dict[str, Any] = Field(..., description="Test run metadata (fork, preset, etc.)")
     context: ContextModel = Field(default_factory=ContextModel)
-    trace: List[Dict[str, Any]] = Field(default_factory=list)  # Stored as dicts internally
+    trace: list[dict[str, Any]] = Field(default_factory=list)  # Stored as dicts internally
 
 
 class ConfigModel(BaseModel):
@@ -105,7 +105,7 @@ class ConfigModel(BaseModel):
     Schema for 'config.yaml'.
     """
 
-    config: Dict[str, Any] = Field(..., description="Dictionary of config constants")
+    config: dict[str, Any] = Field(..., description="Dictionary of config constants")
 
 
 class MetaModel(BaseModel):
@@ -113,4 +113,4 @@ class MetaModel(BaseModel):
     Schema for 'meta.yaml'.
     """
 
-    meta: Dict[str, Any] = Field(..., description="Dictionary of metadata key/value pairs")
+    meta: dict[str, Any] = Field(..., description="Dictionary of metadata key/value pairs")

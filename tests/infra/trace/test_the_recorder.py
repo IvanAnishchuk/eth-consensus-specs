@@ -6,17 +6,19 @@ This approach is faster and more isolated than using 'pytester'.
 """
 
 import pytest
-from remerkleable.complex import Container
 from remerkleable.basic import uint64
-from tests.infra.trace.traced_spec import RecordingSpec
+from remerkleable.complex import Container
 
+from tests.infra.trace.traced_spec import RecordingSpec
 
 # --- Mocks for eth2spec objects ---
 # We rename these to match the expected class names in CLASS_NAME_MAP
 # and inherit from Container so isinstance(x, Container) checks pass.
 
+
 class BeaconState(Container):
     """Mocks a BeaconState"""
+
     slot: uint64
 
     def __new__(cls, root: bytes = b"\x00" * 32, slot: int = 0):
@@ -40,6 +42,7 @@ class BeaconState(Container):
 
 class BeaconBlock(Container):
     """Mocks a BeaconBlock"""
+
     slot: uint64
 
     def __new__(cls, root: bytes = b"\x01" * 32, slot: int = 0):
@@ -55,6 +58,7 @@ class BeaconBlock(Container):
 
 class Attestation(Container):
     """Mocks an Attestation"""
+
     data: uint64  # Dummy field to satisfy Container requirements
 
     def __new__(cls, root: bytes = b"\x02" * 32):
@@ -70,6 +74,7 @@ class Attestation(Container):
 
 class Slot(int):
     """Mocks a Slot (int subclass)"""
+
     pass
 
 
@@ -101,6 +106,7 @@ class MockSpec:
 
 # --- Fixtures ---
 
+
 @pytest.fixture
 def mock_spec():
     return MockSpec()
@@ -112,20 +118,21 @@ def recording_spec(mock_spec):
     # Root is 101010...
     initial_state = BeaconState(root=b"\x10" * 32)
     context = {"state": initial_state}
-    
+
     return RecordingSpec(mock_spec, context)
 
 
 # --- Tests ---
 
+
 def test_basic_function_call(recording_spec):
     """Tests basic function recording and result capture."""
     proxy = recording_spec
-    
+
     # The initial state is registered with a hash-based name
     root_hex = b"\x10" * 32
-    root_hex_str = root_hex.hex()
-    
+    # root_hex_str = root_hex.hex()
+
     # Find the context variable for this state
     state_name = None
     for name, obj in proxy._self_name_to_obj_map.items():
@@ -133,19 +140,19 @@ def test_basic_function_call(recording_spec):
             state_name = name
             break
     assert state_name is not None
-    
+
     # 1. Call function
     # This is the first usage of the state, so we expect an implicit load_state
     result = proxy.get_current_epoch(proxy._self_name_to_obj_map[state_name])
-    
+
     assert result == 0
     assert len(proxy._self_trace_steps) == 2
-    
+
     # Verify auto-injected load_state
     load_step = proxy._self_trace_steps[0]
     assert load_step["op"] == "load_state"
     assert load_step["result"] == state_name
-    
+
     # Verify actual operation
     step = proxy._self_trace_steps[1]
     assert step["op"] == "get_current_epoch"
@@ -157,24 +164,24 @@ def test_basic_function_call(recording_spec):
 def test_argument_sanitization(recording_spec):
     """Tests that arguments are sanitized (bytes -> hex, subclasses -> primitives)."""
     proxy = recording_spec
-    
+
     # 1. Bytes should be hex-encoded
     data = b"\xca\xfe"
     proxy.get_root(data)
-    
+
     step = proxy._self_trace_steps[0]
     assert step["params"]["data"] == "cafe"  # Raw hex
-    
+
     # 2. Int subclasses (Slot) should be raw ints
     slot = Slot(42)
-    
+
     root_hex = b"\x10" * 32
     root_hex_str = root_hex.hex()
     state_name = f"$context.states.{root_hex_str}"
     state = proxy._self_name_to_obj_map[state_name]
-    
+
     proxy.tick(state, slot)
-    
+
     # Step 0: get_root
     # Step 1: load_state (for tick)
     # Step 2: tick
@@ -187,29 +194,29 @@ def test_argument_sanitization(recording_spec):
 def test_result_sanitization(recording_spec):
     """Tests that return values are sanitized."""
     proxy = recording_spec
-    
+
     # get_root returns bytes, expecting hex string in trace
     result = proxy.get_root(b"\xde\xad")
-    
+
     step = proxy._self_trace_steps[0]
-    assert step["result"] == "dead"
+    assert step["result"] == result == "dead"
 
 
 def test_exception_handling(recording_spec):
     """Tests that exceptions are captured in the trace."""
     proxy = recording_spec
-    
+
     # Should re-raise the exception
     with pytest.raises(AssertionError, match="Something went wrong"):
         proxy.fail_op()
-        
+
     assert len(proxy._self_trace_steps) == 1
     step = proxy._self_trace_steps[0]
     assert step["op"] == "fail_op"
-    
+
     # Pydantic model_dump(exclude_none=True) removes keys with None values
     assert "result" not in step
-    
+
     assert step["error"]["type"] == "AssertionError"
     assert step["error"]["message"] == "Something went wrong"
 
@@ -219,35 +226,35 @@ def test_state_mutation_and_deduplication(recording_spec):
     Tests the smart state tracking logic.
     """
     proxy = recording_spec
-    
+
     root_hex = b"\x10" * 32
     root_hex_str = root_hex.hex()
     state_name = f"$context.states.{root_hex_str}"
     state = proxy._self_name_to_obj_map[state_name]
-    
+
     # 1. Call op that DOES change state
     proxy.tick(state, 1)
-    
+
     # We expect 2 steps: [load_state, tick]
     assert len(proxy._self_trace_steps) == 2
-    
+
     load_step = proxy._self_trace_steps[0]
     tick_step = proxy._self_trace_steps[1]
-    
+
     assert load_step["op"] == "load_state"
     assert load_step["result"] == state_name
     assert tick_step["op"] == "tick"
-    
+
     # Check naming convention: should be hash-based
     new_root = state.hash_tree_root().hex()
     assert new_root != root_hex_str
-    
+
     # Ensure the recorder internally tracked the new root
     assert proxy._self_last_root == new_root
-    
+
     # 2. Call op that DOES NOT change state (using the already mutated state)
     proxy.no_op(state)
-    
+
     # Should NOT add 'load_state' because recorder knows the state is already at new_root
     assert len(proxy._self_trace_steps) == 3
     assert proxy._self_trace_steps[2]["op"] == "no_op"
@@ -258,14 +265,14 @@ def test_state_mutation_and_deduplication(recording_spec):
     manual_root_int = int.from_bytes(state._root, "big") + 1
     state._root = manual_root_int.to_bytes(32, "big")
     manual_root_hex = state.hash_tree_root().hex()
-    
+
     # 4. Call op with this "new" state
     proxy.no_op(state)
-    
-    # Now we EXPECT 'load_state' because the passed state (manual_root) 
+
+    # Now we EXPECT 'load_state' because the passed state (manual_root)
     # differs from what the recorder expects (new_root)
     assert len(proxy._self_trace_steps) == 5
-    
+
     load_step_2 = proxy._self_trace_steps[3]
     assert load_step_2["op"] == "load_state"
     # The result should be the name of the state with the MANUAL root
@@ -276,28 +283,28 @@ def test_state_mutation_and_deduplication(recording_spec):
 def test_non_state_object_naming(recording_spec):
     """Tests that non-state objects (blocks) are named by hash."""
     proxy = recording_spec
-    
+
     # Create a mock block
     block_root = b"\x02" * 32
     block = BeaconBlock(root=block_root)
-    
+
     # Call a function with the block
     proxy.get_block_root(block)
-    
+
     # Check the trace
     # We expect 1 step: get_block_root
     assert len(proxy._self_trace_steps) == 1
     step = proxy._self_trace_steps[0]
-    
+
     # The argument should be serialized as a context var with the hash
     expected_name = f"$context.blocks.{block_root.hex()}"
-    
+
     # Check params
     assert step["params"]["block"] == expected_name
-    
+
     # The object should be registered in the map
     assert expected_name in proxy._self_obj_to_name_map.values()
-    
+
     # The artifact should be queued with hash-based filename
     expected_filename = f"blocks_{block_root.hex()}.ssz"
     assert expected_filename in proxy._self_auto_artifacts
