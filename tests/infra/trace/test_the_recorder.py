@@ -199,7 +199,7 @@ def test_result_sanitization(recording_spec):
     result = proxy.get_root(b"\xde\xad")
 
     step = proxy._model.trace[0]
-    assert step["result"] == result == "dead"
+    assert step["result"] == result.hex() == "dead"
 
 
 def test_exception_handling(recording_spec):

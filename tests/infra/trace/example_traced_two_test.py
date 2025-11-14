@@ -5,10 +5,10 @@ It serves as the simplest "hello world" for the new framework.
 """
 
 from eth2spec.test.context import (
-    record_spec_trace,
     spec_state_test,
     with_all_phases,
 )
+from tests.infra.trace.trace_decorator import record_spec_trace
 
 
 @with_all_phases
