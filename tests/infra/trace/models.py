@@ -75,7 +75,7 @@ def _clean_value(v: Any) -> Any:
     - Lists/Dicts -> Recursive clean
     """
     if isinstance(v, bytes):
-        return v.hex()
+        return f"0x{v.hex()}"
     if isinstance(v, int):
         return int(v)
     if isinstance(v, list):

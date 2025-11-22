@@ -171,7 +171,7 @@ def test_argument_sanitization(recording_spec):
     proxy.get_root(data)
 
     step = proxy._model.trace[0]
-    assert step["params"]["data"] == "cafe"  # Raw hex
+    assert step["params"]["data"] == "0xcafe"  # 0xhex
 
     # 2. Int subclasses (Slot) should be raw ints
     slot = Slot(42)
@@ -200,7 +200,7 @@ def test_result_sanitization(recording_spec):
     result = proxy.get_root(b"\xde\xad")
 
     step = proxy._model.trace[0]
-    assert step["result"] == result.hex() == "dead"
+    assert step["result"] == f"0x{result.hex()}" == "0xdead"
 
 
 def test_exception_handling(recording_spec):
