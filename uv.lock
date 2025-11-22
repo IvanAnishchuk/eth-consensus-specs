@@ -534,7 +534,7 @@ requires-dist = [
     { name = "setuptools", specifier = "==80.9.0" },
     { name = "tqdm", marker = "extra == 'generator'", specifier = "==4.67.1" },
     { name = "trie", specifier = "==3.1.0" },
-    { name = "wrapt", specifier = ">=2.0.1" },
+    { name = "wrapt", specifier = "==2.0.1" },
 ]
 provides-extras = ["test", "lint", "generator", "docs"]
 
