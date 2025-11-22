@@ -53,6 +53,7 @@ class RecordingSpec(wrapt.ObjectProxy):
         for name, obj in initial_context_fixtures.items():
             self._self_register_fixture(name, obj)
 
+    # NOTE: _self_ prefix recommended in wrapt docs
     def _self_register_fixture(self, name: str, obj: Any) -> None:
         """Registers an initial fixture in the recording context."""
         class_name = type(obj).__name__
@@ -142,7 +143,12 @@ class RecordingSpec(wrapt.ObjectProxy):
         return record_wrapper
 
     def _self_bind_args(self, func: Any, args: tuple, kwargs: dict) -> inspect.BoundArguments:
-        """Binds positional and keyword arguments to the function signature."""
+        """
+        Binds positional and keyword arguments to the function signature.
+
+        We do this because we often use positional arguments in spec tests,
+        but for recording we want to have a consistent mapping of parameter names to values.
+        """
         sig = inspect.signature(func)
         bound = sig.bind(*args, **kwargs)
         bound.apply_defaults()
