@@ -123,7 +123,7 @@ class TraceModel(BaseModel):
     _name_to_obj: dict[str, Any] = PrivateAttr(default_factory=dict)
     _artifacts: dict[str, Container] = PrivateAttr(default_factory=dict)
 
-    def register_object(self, obj: Any, preferred_name: str = None) -> str | None:
+    def register_object(self, obj: Any) -> ContextVar | None:
         """
         Registers an object in the trace context.
         - If it's an SSZ object (Container), it gets a hash-based name.
