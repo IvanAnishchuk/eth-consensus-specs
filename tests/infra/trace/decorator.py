@@ -1,14 +1,14 @@
 import functools
 import inspect
-import os
 import re
 from collections.abc import Callable
+from pathlib import Path
 from typing import Any
 
 from tests.infra.trace.models import CLASS_NAME_MAP, NON_SSZ_FIXTURES
 from tests.infra.trace.traced_spec import RecordingSpec
 
-DEFAULT_TRACE_DIR = "traces"
+DEFAULT_TRACE_DIR = Path("traces").resolve()
 
 TRACE_PATH_EXCLUDED_FIXTURES = {
     "spec",
@@ -43,7 +43,7 @@ def _sanitize_value_for_path(value: Any) -> str:
 
 def _get_trace_output_dir(
     base_output_dir: str | None, fn: Callable, bound_args: inspect.BoundArguments, fork_name: str
-) -> str:
+    , preset_name: str) -> str:
     """Calculates the output directory path for the trace artifacts."""
     if base_output_dir:
         return base_output_dir
@@ -59,11 +59,12 @@ def _get_trace_output_dir(
         sanitized_val = _sanitize_value_for_path(value)
         param_parts.append(f"{name}_{sanitized_val}")
 
-    path_segments = [DEFAULT_TRACE_DIR, fork_name, test_module, test_name]
-    if param_parts:
-        path_segments.append("__".join(param_parts))
+    path = DEFAULT_TRACE_DIR / fork_name / preset_name / test_module / test_name
 
-    return os.path.join(*path_segments)
+    if param_parts:
+        path /= "__".join(param_parts)
+
+    return path
 
 
 def record_spec_trace(_fn: Callable | None = None, *, output_dir: str | None = None):
@@ -120,7 +121,7 @@ def record_spec_trace(_fn: Callable | None = None, *, output_dir: str | None = N
             finally:
                 try:
                     # Use the *original* spec's fork name for the path
-                    artifact_dir = _get_trace_output_dir(output_dir, fn, bound_args, real_spec.fork)
+                    artifact_dir = _get_trace_output_dir(output_dir, fn, bound_args, real_spec.fork, real_spec.config.PRESET_BASE)
                     print(f"\n[Trace Recorder] Saving trace for {fn.__name__} to: {artifact_dir}")
                     recorder.save_trace(artifact_dir)
                 except Exception as e:
