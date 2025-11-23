@@ -11,8 +11,9 @@ It uses `wrapt.ObjectProxy` to intercept function calls, recording their:
 
 import inspect
 from typing import Any
-from remerkleable.complex import Container
+
 import wrapt
+from remerkleable.complex import Container
 
 from .models import (
     CLASS_NAME_MAP,
@@ -93,10 +94,7 @@ class RecordingSpec(wrapt.ObjectProxy):
             bound_args = self._self_bind_args(real_func, args, kwargs)
 
             # Process arguments and auto-register any NEW SSZ objects as artifacts
-            serial_params = {
-                k: self._self_process_arg(v)
-                for k, v in bound_args.arguments.items()
-            }
+            serial_params = {k: self._self_process_arg(v) for k, v in bound_args.arguments.items()}
 
             # B. Identify State object and handle Context Switching
             state_obj, old_hash = self._self_capture_pre_state(bound_args)
@@ -172,16 +170,16 @@ class RecordingSpec(wrapt.ObjectProxy):
     def _self_record_step(self, op: str, params: dict, result: Any, error: dict | None) -> None:
         """Appends a step to the trace."""
         # Auto-register the result if it's an SSZ object (by calling process_arg)
-        serialized_result = (
-            self._self_process_arg(result) if result is not None else None
-        )
+        serialized_result = self._self_process_arg(result) if result is not None else None
 
         # Create the model to validate and sanitize data (bytes->hex, etc.)
         step_model = TraceStepModel(op=op, params=params, result=serialized_result, error=error)
         self._model.trace.append(step_model)
 
     def _self_update_state_tracker(
-        self, state_obj: Container, old_hash: bytes | None,
+        self,
+        state_obj: Container,
+        old_hash: bytes | None,
     ) -> None:
         """Updates the internal state tracker if the state object was mutated."""
         if not hasattr(state_obj, "hash_tree_root") or old_hash is None:
