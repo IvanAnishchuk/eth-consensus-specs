@@ -11,7 +11,7 @@ It uses `wrapt.ObjectProxy` to intercept function calls, recording their:
 
 import inspect
 from typing import Any
-
+from remerkleable.complex import Container
 import wrapt
 
 from .models import (
@@ -114,9 +114,7 @@ class RecordingSpec(wrapt.ObjectProxy):
 
                     if state_var:
                         self._model.trace.append(
-                            TraceStepModel(op="load_state", params={}, result=state_var).model_dump(
-                                exclude_none=True
-                            )
+                            TraceStepModel(op="load_state", params={}, result=state_var)
                         )
                         self._self_last_root = current_root_hex
 
@@ -154,9 +152,10 @@ class RecordingSpec(wrapt.ObjectProxy):
         bound.apply_defaults()
         return bound
 
+    # FIXME: typing for state_obj is tricky because specific implementation is in the spec
     def _self_capture_pre_state(
         self, bound_args: inspect.BoundArguments
-    ) -> tuple[Any, bytes | None]:  # FIXME: BeaconState | None probably
+    ) -> tuple[Container | None, bytes | None]:
         """Finds the BeaconState argument (if any) and captures its root hash."""
         state_obj = None
 
@@ -179,10 +178,10 @@ class RecordingSpec(wrapt.ObjectProxy):
 
         # Create the model to validate and sanitize data (bytes->hex, etc.)
         step_model = TraceStepModel(op=op, params=params, result=serialized_result, error=error)
-        self._model.trace.append(step_model.model_dump(exclude_none=True))
+        self._model.trace.append(step_model)
 
     def _self_update_state_tracker(
-        self, state_obj: Any, old_hash: bytes | None,
+        self, state_obj: Container, old_hash: bytes | None,
     ) -> None:
         """Updates the internal state tracker if the state object was mutated."""
         if not hasattr(state_obj, "hash_tree_root") or old_hash is None:

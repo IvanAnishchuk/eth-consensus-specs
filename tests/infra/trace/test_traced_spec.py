@@ -151,15 +151,15 @@ def test_basic_function_call(recording_spec):
 
     # Verify auto-injected load_state
     load_step = proxy._model.trace[0]
-    assert load_step["op"] == "load_state"
-    assert load_step["result"] == state_name
+    assert load_step.op == "load_state"
+    assert load_step.result == state_name
     # TODO hash should match root_hex_str
 
     # Verify actual operation
     step = proxy._model.trace[1]
-    assert step["op"] == "get_current_epoch"
-    assert step["result"] == 0
-    assert "error" not in step or step["error"] is None
+    assert step.op == "get_current_epoch"
+    assert step.result == 0
+    assert step.error is None
 
 
 def test_argument_sanitization(recording_spec):
@@ -171,7 +171,7 @@ def test_argument_sanitization(recording_spec):
     proxy.get_root(data)
 
     step = proxy._model.trace[0]
-    assert step["params"]["data"] == "0xcafe"  # 0xhex
+    assert step.params["data"] == "0xcafe"  # 0xhex
 
     # 2. Int subclasses (Slot) should be raw ints
     slot = Slot(42)
@@ -187,9 +187,9 @@ def test_argument_sanitization(recording_spec):
     # Step 1: load_state (for tick)
     # Step 2: tick
     step = proxy._model.trace[2]
-    assert step["op"] == "tick"
-    assert step["params"]["slot"] == 42
-    assert type(step["params"]["slot"]) is int
+    assert step.op == "tick"
+    assert step.params["slot"] == 42
+    assert type(step.params["slot"]) is int
 
 
 def test_result_sanitization(recording_spec):
@@ -200,7 +200,7 @@ def test_result_sanitization(recording_spec):
     result = proxy.get_root(b"\xde\xad")
 
     step = proxy._model.trace[0]
-    assert step["result"] == f"0x{result.hex()}" == "0xdead"
+    assert step.result == f"0x{result.hex()}" == "0xdead"
 
 
 def test_exception_handling(recording_spec):
@@ -213,13 +213,13 @@ def test_exception_handling(recording_spec):
 
     assert len(proxy._model.trace) == 1
     step = proxy._model.trace[0]
-    assert step["op"] == "fail_op"
+    assert step.op == "fail_op"
 
     # "result" is excluded when None
-    assert "result" not in step
+    assert step.result is None
 
-    assert step["error"]["type"] == "AssertionError"
-    assert step["error"]["message"] == "Something went wrong"
+    assert step.error["type"] == "AssertionError"
+    assert step.error["message"] == "Something went wrong"
 
 
 def test_state_mutation_and_deduplication(recording_spec):
@@ -242,9 +242,9 @@ def test_state_mutation_and_deduplication(recording_spec):
     load_step = proxy._model.trace[0]
     tick_step = proxy._model.trace[1]
 
-    assert load_step["op"] == "load_state"
-    assert load_step["result"] == state_name
-    assert tick_step["op"] == "tick"
+    assert load_step.op == "load_state"
+    assert load_step.result == state_name
+    assert tick_step.op == "tick"
 
     # Check naming convention: should be hash-based
     new_root = state.hash_tree_root().hex()
@@ -258,7 +258,7 @@ def test_state_mutation_and_deduplication(recording_spec):
 
     # Should NOT add 'load_state' because recorder knows the state is already at new_root
     assert len(proxy._model.trace) == 3
-    assert proxy._model.trace[2]["op"] == "no_op"
+    assert proxy._model.trace[2].op == "no_op"
 
     # 3. Simulate OUT-OF-BAND mutation
     manual_root_int = int.from_bytes(state._root, "big") + 1
@@ -273,9 +273,9 @@ def test_state_mutation_and_deduplication(recording_spec):
     assert len(proxy._model.trace) == 5
 
     load_step_2 = proxy._model.trace[3]
-    assert load_step_2["op"] == "load_state"
-    assert load_step_2["result"] == f"$context.states.{manual_root_hex}"
-    assert proxy._model.trace[4]["op"] == "no_op"
+    assert load_step_2.op == "load_state"
+    assert load_step_2.result == f"$context.states.{manual_root_hex}"
+    assert proxy._model.trace[4].op == "no_op"
 
 
 def test_non_state_object_naming(recording_spec):
@@ -298,7 +298,7 @@ def test_non_state_object_naming(recording_spec):
     expected_name = f"$context.blocks.{block_root.hex()}"
 
     # Check params
-    assert step["params"]["block"] == expected_name
+    assert step.params["block"] == expected_name
 
     # The object should be registered in the map
     assert expected_name in proxy._model._hash_to_name.values()

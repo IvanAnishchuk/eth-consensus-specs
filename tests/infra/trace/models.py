@@ -116,7 +116,7 @@ class TraceModel(BaseModel):
 
     metadata: dict[str, Any] = Field(..., description="Test run metadata (fork, preset, etc.)")
     context: ContextModel = Field(default_factory=ContextModel)
-    trace: list[dict[str, Any]] = Field(default_factory=list)  # Stored as dicts internally
+    trace: list[TraceStepModel] = Field(default_factory=list)
 
     # Private registry state (not serialized directly, used to build the trace)
     _hash_to_name: dict[int, str] = PrivateAttr(default_factory=dict)
