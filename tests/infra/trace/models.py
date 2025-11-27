@@ -16,6 +16,7 @@ from pydantic.types import constr
 from remerkleable.complex import Container
 
 from eth2spec.utils.ssz.ssz_impl import serialize as ssz_serialize
+from eth2spec.utils.ssz.ssz_typing import View  # used to check SSZ objects
 
 # --- Configuration ---
 
@@ -91,7 +92,9 @@ class TraceStepModel(BaseModel):
     Represents a function call ('op'), its inputs, and its outcome.
     """
 
-    op: str = Field(..., description="The spec function name, e.g., 'process_slots'")
+    op: str = Field(..., description="The operation name e.g. load_state, spec_call")
+    # TODO we might want an abstract base class where op defines the subclass
+    method: str = Field(..., description="The spec function name, e.g., 'process_slots'")
     params: dict[str, Any] = Field(
         default_factory=dict, description="Arguments passed to the function"
     )
@@ -115,7 +118,7 @@ class TraceModel(BaseModel):
     """
 
     metadata: dict[str, Any] = Field(..., description="Test run metadata (fork, preset, etc.)")
-    context: ContextModel = Field(default_factory=ContextModel)
+    context: ContextModel = Field(default_factory=ContextModel)  # TODO probably remove
     trace: list[TraceStepModel] = Field(default_factory=list)
 
     # Private registry state (not serialized directly, used to build the trace)
@@ -132,6 +135,7 @@ class TraceModel(BaseModel):
         if obj is None:
             return None
 
+        # TODO Use View to determine whether it's an SSZ object
         if not isinstance(obj, Container):
             return None
 
@@ -156,6 +160,7 @@ class TraceModel(BaseModel):
 
         return context_name
 
+    # TODO make a standalone utility function maybe
     def dump_to_dir(self, output_dir: str, config: dict[str, Any] = None) -> None:
         """
         Writes the trace and all artifacts to the specified directory.
@@ -187,7 +192,7 @@ class TraceModel(BaseModel):
         except Exception as e:
             print(f"ERROR: Failed to write YAML {path}: {e}")
 
-
+# Not sure about this
 class ConfigModel(BaseModel):
     """
     Schema for configuration constants
@@ -196,6 +201,7 @@ class ConfigModel(BaseModel):
     config: dict[str, Any] = Field(..., description="Dictionary of config constants")
 
 
+# TODO probably not needed
 class MetaModel(BaseModel):
     """
     Schema for metadata

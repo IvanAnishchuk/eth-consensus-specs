@@ -22,6 +22,26 @@ from .models import (
     TraceStepModel,
 )
 
+from eth2spec.utils.ssz.ssz_typing import View
+
+
+def ssz_object_to_filename(self, obj: View) -> str:
+    """
+    Registers an object in the trace context.
+    - If it's an SSZ object (Container), it gets a hash-based name.
+    - If it's a primitive, it returns None (passed through).
+    """
+    # Use View to determine whether it's an SSZ object
+    if not isinstance(obj, View):
+        return None
+
+    obj_type = type(obj).__name__.lower()
+
+    # Generate Name (Content-Addressed)
+    root_hex = obj.hash_tree_root().hex()
+    filename = f"{obj_type}_{root_hex}.ssz"
+
+    return filename
 
 class RecordingSpec(wrapt.ObjectProxy):
     """
@@ -34,7 +54,7 @@ class RecordingSpec(wrapt.ObjectProxy):
     # Internal state
     _model: TraceModel
     _self_config_data: dict[str, Any]
-    _self_last_root: str | None
+    _self_last_root: str | None  # TODO rename to last_state_root probably
 
     def __init__(
         self,
@@ -84,9 +104,9 @@ class RecordingSpec(wrapt.ObjectProxy):
             return real_attr
 
         # 4. Return the recording wrapper
-        return self._self_create_wrapper(name, real_attr)
+        return self._self_create_wrapper("spec_call", name, real_attr)
 
-    def _self_create_wrapper(self, op_name: str, real_func: Any) -> Any:
+    def _self_create_wrapper(self, op_name: str, method: str, real_func: callable) -> Any:
         """Creates a closure to record the function call."""
 
         def record_wrapper(*args: Any, **kwargs: Any) -> Any:
@@ -205,6 +225,7 @@ class RecordingSpec(wrapt.ObjectProxy):
         Returns the context variable string or the original primitive.
         """
         # Delegate registration to the model
+        # TODO: just use hashes and keep this simple
         context_name = self._model.register_object(arg)
         if context_name:
             return context_name
