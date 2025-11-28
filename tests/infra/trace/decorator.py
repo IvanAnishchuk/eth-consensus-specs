@@ -5,7 +5,7 @@ from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
-from tests.infra.trace.models import CLASS_NAME_MAP, NON_SSZ_FIXTURES
+#from tests.infra.trace.models import CLASS_NAME_MAP, NON_SSZ_FIXTURES
 from tests.infra.trace.traced_spec import RecordingSpec
 
 DEFAULT_TRACE_DIR = Path("traces").resolve()
@@ -98,11 +98,11 @@ def record_spec_trace(_fn: Callable | None = None, *, output_dir: str | None = N
             real_spec = bound_args.arguments["spec"]
 
             # 2. Prepare context for recording
-            initial_fixtures = {
-                k: v
-                for k, v in bound_args.arguments.items()
-                if k != "spec" and (k in NON_SSZ_FIXTURES or CLASS_NAME_MAP.get(type(v).__name__))
-            }
+            #initial_fixtures = {
+            #    k: v
+            #    for k, v in bound_args.arguments.items()
+            #    if k != "spec" and (k in NON_SSZ_FIXTURES or CLASS_NAME_MAP.get(type(v).__name__))
+            #}
 
             metadata = {
                 "fork": real_spec.fork,
@@ -117,7 +117,7 @@ def record_spec_trace(_fn: Callable | None = None, *, output_dir: str | None = N
 
             # 3. Inject the recorder
             recorder = RecordingSpec(
-                real_spec, initial_fixtures, metadata=metadata, parameters=parameters
+                real_spec, metadata=metadata, parameters=parameters
             )
             bound_args.arguments["spec"] = recorder
 

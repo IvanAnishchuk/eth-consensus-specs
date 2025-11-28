@@ -18,7 +18,7 @@ from remerkleable.complex import Container
 from eth2spec.utils.ssz.ssz_typing import View
 
 from .models import (
-    NON_SSZ_FIXTURES,
+    #NON_SSZ_FIXTURES,
     TraceModel,
     TraceStepModel,
 )
@@ -59,7 +59,7 @@ class RecordingSpec(wrapt.ObjectProxy):
     def __init__(
         self,
         wrapped_spec: Any,
-        initial_context_fixtures: dict[str, Any],
+        #initial_context_fixtures: dict[str, Any],
         metadata: dict[str, Any] | None = None,
         parameters: dict[str, Any] | None = None,
     ):
@@ -222,7 +222,7 @@ class RecordingSpec(wrapt.ObjectProxy):
         """
         # just use hashes and keep this simple
         ssz_filename = ssz_object_to_filename(arg)
-        if ssz_filename and ssz_filename not in NON_SSZ_FIXTURES:
+        if ssz_filename: # and ssz_filename not in NON_SSZ_FIXTURES:
             self._model._artifacts[ssz_filename] = arg
             return ssz_filename
 
