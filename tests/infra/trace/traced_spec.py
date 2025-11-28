@@ -15,14 +15,13 @@ from typing import Any
 import wrapt
 from remerkleable.complex import Container
 
+from eth2spec.utils.ssz.ssz_typing import View
+
 from .models import (
-    CLASS_NAME_MAP,
     NON_SSZ_FIXTURES,
     TraceModel,
     TraceStepModel,
 )
-
-from eth2spec.utils.ssz.ssz_typing import View
 
 
 def ssz_object_to_filename(obj: View) -> str:
@@ -42,6 +41,7 @@ def ssz_object_to_filename(obj: View) -> str:
     filename = f"{obj_type}_{root_hex}.ssz"
 
     return filename
+
 
 class RecordingSpec(wrapt.ObjectProxy):
     """
@@ -176,13 +176,17 @@ class RecordingSpec(wrapt.ObjectProxy):
 
         return None, None
 
-    def _self_record_step(self, op: str, method: str, params: dict, result: Any, error: dict | None) -> None:
+    def _self_record_step(
+        self, op: str, method: str, params: dict, result: Any, error: dict | None
+    ) -> None:
         """Appends a step to the trace."""
         # Auto-register the result if it's an SSZ object (by calling process_arg)
         serialized_result = self._self_process_arg(result) if result is not None else None
 
         # Create the model to validate and sanitize data (bytes->hex, etc.)
-        step_model = TraceStepModel(op=op, method=method, params=params, result=serialized_result, error=error)
+        step_model = TraceStepModel(
+            op=op, method=method, params=params, result=serialized_result, error=error
+        )
         self._model.trace.append(step_model)
 
     # TODO perhaps add a record_state_mutation method for load_state and similar

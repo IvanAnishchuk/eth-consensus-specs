@@ -196,6 +196,7 @@ class TraceModel(BaseModel):
         except Exception as e:
             print(f"ERROR: Failed to write YAML {path}: {e}")
 
+
 # Not sure about this
 class ConfigModel(BaseModel):
     """
