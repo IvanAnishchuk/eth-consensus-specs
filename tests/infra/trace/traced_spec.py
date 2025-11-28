@@ -25,7 +25,7 @@ from .models import (
 from eth2spec.utils.ssz.ssz_typing import View
 
 
-def ssz_object_to_filename(self, obj: View) -> str:
+def ssz_object_to_filename(obj: View) -> str:
     """
     Registers an object in the trace context.
     - If it's an SSZ object (Container), it gets a hash-based name.
@@ -69,21 +69,6 @@ class RecordingSpec(wrapt.ObjectProxy):
         self._self_last_root = None
 
         self._model = TraceModel(metadata=metadata or {}, context={"parameters": parameters or {}})
-
-        # Register initial fixtures
-        for name, obj in initial_context_fixtures.items():
-            self._self_register_fixture(name, obj)
-
-    # NOTE: _self_ prefix recommended in wrapt docs
-    def _self_register_fixture(self, name: str, obj: Any) -> None:
-        """Registers an initial fixture in the recording context."""
-        class_name = type(obj).__name__
-        if class_name not in CLASS_NAME_MAP:
-            if name in NON_SSZ_FIXTURES:
-                self._model.context.fixtures.append(name)
-        else:
-            # Seed the context with initial SSZ objects
-            self._self_process_arg(obj)
 
     # --- Interception Logic ---
 
@@ -132,8 +117,12 @@ class RecordingSpec(wrapt.ObjectProxy):
 
                     if state_var:
                         self._model.trace.append(
-                            TraceStepModel(op="load_state", params={}, result=state_var)
+                            # FIXME: probably a different class so there's no weird empty method here
+                            TraceStepModel(op="load_state", method="", params={}, result=state_var)
                         )
+                        name = ssz_object_to_filename(state_obj)
+                        # FIXME: ^^ isn't this already done in _self_process_arg?
+                        self._model._artifacts[name] = state_obj
                         self._self_last_root = current_root_hex
 
             # C. Execute the real function
@@ -144,11 +133,11 @@ class RecordingSpec(wrapt.ObjectProxy):
                 result = None
                 error = {"type": type(e).__name__, "message": str(e)}
                 # We must record the step before re-raising
-                self._self_record_step(op_name, serial_params, result, error)
+                self._self_record_step(op_name, method, serial_params, result, error)
                 raise e
 
             # D. Record the successful step
-            self._self_record_step(op_name, serial_params, result, None)
+            self._self_record_step(op_name, method, serial_params, result, None)
 
             # E. Update tracked state if mutated
             if state_obj is not None:
@@ -187,14 +176,16 @@ class RecordingSpec(wrapt.ObjectProxy):
 
         return None, None
 
-    def _self_record_step(self, op: str, params: dict, result: Any, error: dict | None) -> None:
+    def _self_record_step(self, op: str, method: str, params: dict, result: Any, error: dict | None) -> None:
         """Appends a step to the trace."""
         # Auto-register the result if it's an SSZ object (by calling process_arg)
         serialized_result = self._self_process_arg(result) if result is not None else None
 
         # Create the model to validate and sanitize data (bytes->hex, etc.)
-        step_model = TraceStepModel(op=op, params=params, result=serialized_result, error=error)
+        step_model = TraceStepModel(op=op, method=method, params=params, result=serialized_result, error=error)
         self._model.trace.append(step_model)
+
+    # TODO perhaps add a record_state_mutation method for load_state and similar
 
     def _self_update_state_tracker(
         self,
@@ -221,14 +212,15 @@ class RecordingSpec(wrapt.ObjectProxy):
 
     def _self_process_arg(self, arg: Any) -> Any:
         """
+        FIXME: we are changing logic here
         Delegates to TraceModel to register objects/artifacts.
         Returns the context variable string or the original primitive.
         """
-        # Delegate registration to the model
-        # TODO: just use hashes and keep this simple
-        context_name = self._model.register_object(arg)
-        if context_name:
-            return context_name
+        # just use hashes and keep this simple
+        ssz_filename = ssz_object_to_filename(arg)
+        if ssz_filename and ssz_filename not in NON_SSZ_FIXTURES:
+            self._model._artifacts[ssz_filename] = arg
+            return ssz_filename
 
         # If register_object returns None, it's a primitive (or unknown type)
         # Pass it through for Pydantic to handle
@@ -236,6 +228,7 @@ class RecordingSpec(wrapt.ObjectProxy):
 
     def save_trace(self, output_dir: str) -> None:
         """
+        FIXME: this might be a standalone hjelper function instead
         Writes the captured trace and artifacts to the filesystem.
         Delegates the actual writing to the TraceModel.
         """

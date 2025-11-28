@@ -124,8 +124,11 @@ class TraceModel(BaseModel):
     # Private registry state (not serialized directly, used to build the trace)
     _hash_to_name: dict[int, str] = PrivateAttr(default_factory=dict)
     _name_to_obj: dict[str, Any] = PrivateAttr(default_factory=dict)
-    _artifacts: dict[str, Container] = PrivateAttr(default_factory=dict)
+    # TODO remove this ^^
+    # TODO just this one is probably enough for lookups
+    _artifacts: dict[str, View] = PrivateAttr(default_factory=dict)
 
+    # probably remove the whole method
     def register_object(self, obj: Any) -> ContextVar | None:
         """
         Registers an object in the trace context.
@@ -147,6 +150,7 @@ class TraceModel(BaseModel):
         obj_type = CLASS_NAME_MAP[class_name]
         root_hex = obj.hash_tree_root().hex()
         context_name = cast(ContextVar, f"$context.{obj_type}.{root_hex}")
+        # TODO just filename should be enough
         filename = f"{obj_type}_{root_hex}.ssz"
 
         # Update Registry

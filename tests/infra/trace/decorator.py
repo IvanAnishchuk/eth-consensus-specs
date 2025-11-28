@@ -20,6 +20,7 @@ TRACE_PATH_EXCLUDED_FIXTURES = {
     "fork_epoch",
 }
 
+# TODO simplify this module, it can be very simple
 
 # these helpers are slightly verbose but it's just for filename generation
 def _sanitize_value_for_path(value: Any) -> str:
