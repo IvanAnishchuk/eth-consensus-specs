@@ -8,12 +8,10 @@ Pydantic models defining the schema for the generated test vector artifacts:
 """
 
 import os
-from typing import Any, cast, TypeAlias
+from typing import Any
 
 import yaml
 from pydantic import BaseModel, Field, field_validator, PrivateAttr
-from pydantic.types import constr
-from remerkleable.complex import Container
 
 from eth2spec.utils.ssz.ssz_impl import serialize as ssz_serialize
 from eth2spec.utils.ssz.ssz_typing import View  # used to check SSZ objects
@@ -71,7 +69,9 @@ class TraceModel(BaseModel):
     """
 
     # TODO: perhaps str, str unless it can int, bool, etc. sometimes
-    metadata: dict[str, Any] = Field(..., default_factory=list, description="Test run metadata (fork, preset, etc.)")
+    metadata: dict[str, Any] = Field(
+        ..., default_factory=list, description="Test run metadata (fork, preset, etc.)"
+    )
     trace: list[TraceStepModel] = Field(default_factory=list)
 
     # Private registry state (not serialized directly, used to build the trace)

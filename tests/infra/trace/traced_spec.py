@@ -18,7 +18,7 @@ from remerkleable.complex import Container
 from eth2spec.utils.ssz.ssz_typing import View
 
 from .models import (
-    #NON_SSZ_FIXTURES,
+    # NON_SSZ_FIXTURES,
     TraceModel,
     TraceStepModel,
 )
@@ -31,10 +31,20 @@ def ssz_object_to_filename(obj: View) -> str:
     - If it's a primitive, it returns None (passed through).
     """
     # Use View to determine whether it's an SSZ object
+    print("ssz_object_to_filename called with:", type(obj))
     if not isinstance(obj, View):
         return None
+    # FIXME: some primitive subclasses might still be Views? we don't want to ssz every single thing...
+    if isinstance(obj, bytes):
+        None
+    if isinstance(obj, int):
+        None
 
     obj_type = type(obj).__name__.lower()
+
+    # FIXME: let's whitelist for now but this needs a better solution
+    if obj_type not in ['beaconstate', 'attestation', 'beaconblock']:
+         return None
 
     # Generate Name (Content-Addressed)
     root_hex = obj.hash_tree_root().hex()
@@ -53,13 +63,14 @@ class RecordingSpec(wrapt.ObjectProxy):
 
     # Internal state
     _model: TraceModel
-    _self_config_data: dict[str, Any]
+    # FIXME Perhaps _self thing is unnecessary after all? Just underscore it...
+    _self_config_data: dict[str, Any]  # FIXME is this used?
     _self_last_root: str | None  # TODO rename to last_state_root probably
 
     def __init__(
         self,
         wrapped_spec: Any,
-        #initial_context_fixtures: dict[str, Any],
+        # initial_context_fixtures: dict[str, Any],
         metadata: dict[str, Any] | None = None,
         parameters: dict[str, Any] | None = None,
     ):
@@ -68,7 +79,8 @@ class RecordingSpec(wrapt.ObjectProxy):
         self._self_config_data = {}
         self._self_last_root = None
 
-        self._model = TraceModel(metadata=metadata or {}, context={"parameters": parameters or {}})
+        # FIXME let's just add parameters to metadata dict? to be reviewed
+        self._model = TraceModel(metadata=(metadata or {}) | {"parameters": parameters or {}})
 
     # --- Interception Logic ---
 
@@ -160,6 +172,7 @@ class RecordingSpec(wrapt.ObjectProxy):
         return bound
 
     # FIXME: typing for state_obj is tricky because specific implementation is in the spec
+    # TODO: use View
     def _self_capture_pre_state(
         self, bound_args: inspect.BoundArguments
     ) -> tuple[Container | None, bytes | None]:
@@ -220,9 +233,12 @@ class RecordingSpec(wrapt.ObjectProxy):
         Delegates to TraceModel to register objects/artifacts.
         Returns the context variable string or the original primitive.
         """
+        if not isinstance(arg, View):
+            return arg
         # just use hashes and keep this simple
         ssz_filename = ssz_object_to_filename(arg)
-        if ssz_filename: # and ssz_filename not in NON_SSZ_FIXTURES:
+        if ssz_filename:  # and ssz_filename not in NON_SSZ_FIXTURES:
+            print("Registering SSZ object as artifact:", ssz_filename)
             self._model._artifacts[ssz_filename] = arg
             return ssz_filename
 
