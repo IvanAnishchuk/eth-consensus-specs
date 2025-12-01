@@ -122,7 +122,7 @@ def recording_spec(mock_spec):
     initial_state = BeaconState(root=b"\x10" * 32)
     context = {"state": initial_state}
 
-    return RecordingSpec(mock_spec, context)
+    return RecordingSpec(mock_spec)
 
 
 # --- Tests ---

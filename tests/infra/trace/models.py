@@ -19,6 +19,7 @@ from eth2spec.utils.ssz.ssz_typing import View  # used to check SSZ objects
 import snappy
 
 
+# TODO: recheck how it all works without this now
 def _clean_value(value: Any) -> Any:
     """
     Hexify raw bytes.
@@ -83,10 +84,6 @@ class SpecCallStepModel(TraceStepModel):
     output: Any | None = Field(
         None, description="The return value (context var reference or primitive)"
     )
-    error: dict[str, str] | None = Field(
-        None, description="Error details if the operation raised an exception"
-    )
-    # TODO: verify if we actually need to trace exceptions like ever
 
     # FIXME: perhaps we should use serializer rather than validator? sounds like more idiomatic pydantic maybe
     @field_validator("input", "output", mode="before")
@@ -100,10 +97,6 @@ class TraceModel(BaseModel):
     Contains metadata, context, and the execution trace.
     """
 
-    # TODO: perhaps str, str unless it can int, bool, etc. sometimes
-    #metadata: dict[str, Any] = Field(
-    #    ..., default_factory=list, description="Test run metadata (fork, preset, etc.)"
-    #)
     trace: list[AssertStateStepModel | LoadStateStepModel | SpecCallStepModel] = Field(default_factory=list)
 
     # TODO: remove this one as well?
@@ -113,43 +106,3 @@ class TraceModel(BaseModel):
     _artifacts: dict[str, View] = PrivateAttr(default_factory=dict)
 
     # TODO: if we are using these to store artifacts to return to the runner we should probably enshrine it and make sure to serialize early (to avoid problems with mutation)
-
-
-# TODO most of these are not needed with the new approach
-# TODO make a standalone utility function maybe
-def dump_to_dir(trace_obj: TraceModel, output_dir: Path) -> None:
-    """
-    Writes the trace and all artifacts to the specified directory.
-    """
-    os.makedirs(output_dir, exist_ok=True)
-
-    # TODO if we're not keeping the mapping, perhaps dump the objects right away?
-    # 1. Write SSZ artifacts
-    for filename, obj in trace_obj._artifacts.items():
-        write_ssz_artifact(obj, output_dir / filename)  # TODO pass dir only to be combined with hash filename later
-
-    # 2. Write YAML files
-    path = output_dir / "trace.yaml"
-    try:
-        with open(path, "w") as f:
-            # TODO: mode='json' is recommended to convert to JSON-compatible types
-            # yeah, I think it works
-            yaml.dump(trace_obj.model_dump(mode="json", exclude_none=True), f, sort_keys=False, default_flow_style=False)
-    except Exception as e:
-        print(f"[Trace Recorder] ERROR: Failed to write YAML {path}: {e}")
-        raise
-
-    print(f"[Trace Recorder] Saved artifacts to {output_dir}")
-
-def write_ssz_artifact(obj: View, path: Path) -> None:
-    """Helper to write an SSZ object to disk (snappy compresed)."""
-    # TODO: we can get hash from obj here, perhaps we should use that and pass dirpath in path only to combine here
-    try:
-        with open(path, "wb") as f:
-            # FIXME: not completely officially sure I'm doing this right, there's no standard helper
-            f.write(snappy.compress(ssz_serialize(obj)))
-    # TODO: make sure we apply snappy compression everywhere and use ssz_snappy extension
-    # FIXME: is there any serialization+compression helper we should be using?
-    except Exception as e:
-        print(f"[Trace Recorder] ERROR: Failed to write SSZ artifact {path}: {e}")
-        raise
