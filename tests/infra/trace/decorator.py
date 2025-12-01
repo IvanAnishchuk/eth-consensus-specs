@@ -43,12 +43,16 @@ def record_spec_trace(fn: Callable) -> Callable:
         # 4. Run test & Save trace
         try:
             result = fn(*bound_args.args, **bound_args.kwargs)
+            # FIXME: ^^ I guess result is always ignored
         finally:
             recorder.finalize()  # not sure if this is the right place but we need to do this after execution is done before returning data
+            # yield data so that runner can pick it up and dump
             for x, y, z in [
+                # trace to be dumped as yaml
                 ("trace", "data", recorder._model.model_dump(mode="json", exclude_none=True)),
             ] + [
-                (name, "ssz", value)  # FIXME: this should probably be recorded as serialized already
+                (name, "ssz", value)
+                # ssz artifacts are already serialized and will be compressed by the dumper
                 for name, value in recorder._model._artifacts.items()
             ]:
                 yield x, y, z

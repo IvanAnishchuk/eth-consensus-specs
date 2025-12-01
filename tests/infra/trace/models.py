@@ -2,9 +2,8 @@
 Trace Models
 ------------
 Pydantic models defining the schema for the generated test vector artifacts:
-- Trace
-- TraceStep
-- Context
+- TraceConfig
+- TraceStep: LoadStateOp | SpecCallOp | AssertStateOp
 """
 
 import os
@@ -69,23 +68,25 @@ class SpecCallOp(TraceStepModel):
         default=None, description="The return value (ssz hash or primitive)"
     )
 
-    #@field_validator("input", "assert_output", mode="before")
-    #@classmethod
-    #def sanitize_data(cls, v: Any) -> Any:
-    #    if isinstance(v, bytes):
-    #        return f"0x{v.hex()}"
-    #    if isinstance(v, str):
-    #        return str(v)
-    #    if isinstance(v, int):
-    #        return int(v)
-    #    if isinstance(v, list):
-    #        return [cls.sanitize_data(x) for x in v]
-    #    if isinstance(v, dict):
-    #        return {k: cls.sanitize_data(val) for k, val in v.items()}
-    #    return v
-    #
-    #    #return _clean_value(v)
-
+    @field_validator("input", "assert_output", mode="before")
+    @classmethod
+    def sanitize_data(cls, v: Any) -> Any:
+        # FIXME: there might be a better place for this in the serializer not validator
+        # convert raw bytes to hex
+        if isinstance(v, bytes):
+            return f"0x{v.hex()}"
+        # coerce primitive types into their raw form
+        if isinstance(v, str):
+            return str(v)
+        if isinstance(v, int):
+            return int(v)
+        # recursively clean simple structures
+        if isinstance(v, list):
+            return [cls.sanitize_data(x) for x in v]
+        if isinstance(v, dict):
+            return {k: cls.sanitize_data(val) for k, val in v.items()}
+        return v
+    
 
 class TraceConfig(BaseModel):
     """
