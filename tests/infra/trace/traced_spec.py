@@ -54,7 +54,7 @@ def ssz_object_to_filename(obj: View) -> str:
 
     # Generate Name (Content-Addressed by raw root hash)
     root_hex = obj.hash_tree_root().hex()
-    filename = f"{root_hex}.ssz_snappy"
+    filename = root_hex
 
     return filename
 
@@ -122,7 +122,7 @@ class RecordingSpec(wrapt.ObjectProxy):
             serial_params = {k: self._self_process_arg(v) for k, v in bound_args.arguments.items()}
 
             # B. Identify State object and handle Context Switching
-            # FIXME: why is this called old_hash????
+            # FIXME: why is this called old_hash? it's not really old, but it's captured before the call and then we have result after the call
             state_obj, old_hash = self._self_capture_pre_state(bound_args)
 
             if old_hash is not None:

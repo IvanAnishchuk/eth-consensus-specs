@@ -97,6 +97,7 @@ class TraceModel(BaseModel):
 
     # TODO: remove this one as well?
     # it's used to temporary keep artifacts before dumping but really we should probably dump them right away and just save the hashes in trace
+    # FIXME: but if we need to pass all artifacts as objects in output - we should keep them somewhere...
     # Private registry state (not serialized directly, used to build the trace)
     _artifacts: dict[str, View] = PrivateAttr(default_factory=dict)
 

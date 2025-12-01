@@ -3,6 +3,7 @@ import inspect
 from collections.abc import Callable
 from pathlib import Path
 from typing import Any
+from eth2spec.utils.ssz.ssz_impl import serialize as ssz_serialize
 
 # from tests.infra.trace.models import CLASS_NAME_MAP, NON_SSZ_FIXTURES
 from tests.infra.trace.traced_spec import RecordingSpec
@@ -10,7 +11,8 @@ from tests.infra.trace.traced_spec import RecordingSpec
 DEFAULT_TRACE_DIR = Path("traces").resolve()  # FIXME: better default? TODO: probably move constant to traced_spec and import here
 
 # TODO simplify this module, it can be very simple
-
+# TODO make this return data instead of writing files directly? runner should handle writing files?
+# TODO: are we using existing runners and dumpers or do we need a new thing for handling this?
 
 def _get_trace_output_dir(
     fn: Callable,
@@ -47,7 +49,6 @@ def record_spec_trace(fn: Callable) -> Callable:
             bound_args = inspect.signature(fn).bind(*args, **kwargs)
             bound_args.apply_defaults()
         except TypeError:
-            # FIXME: simplify?
             # Fallback for non-test invocations
             return fn(*args, **kwargs)
 
@@ -72,17 +73,33 @@ def record_spec_trace(fn: Callable) -> Callable:
         recorder = RecordingSpec(real_spec, metadata=metadata, parameters=parameters)
         bound_args.arguments["spec"] = recorder
 
+
+        # TODO: here, so instead of saving directly, we can return the data to the caller
+        # FIXME: should we use the previous format used by standard dumper?
+        # it would be a list of tuples
+        # outputs.append((name, kind, data))
+        # "trace", "data", trace_obj
+        # "hash", "ssz", ssz_obj
+        # (we could add some meta as well)
+
         # 4. Run test & Save trace
         try:
-            return fn(*bound_args.args, **bound_args.kwargs)
+            result = fn(*bound_args.args, **bound_args.kwargs)
         finally:
-            try:
-                # Use the *original* spec's fork name for the path
-                artifact_dir = _get_trace_output_dir(fn, real_spec)
+            for x,y,z in [
+                ("trace", "data", recorder._model.model_dump(mode="json", exclude_none=True)),
+            ] + [
+                (name, "ssz", ssz_serialize(value))
+                for name, value in recorder._model._artifacts.items()
+            ]:
+                yield x, y, z
+            #try:
+            #    # Use the *original* spec's fork name for the path
+            #    artifact_dir = _get_trace_output_dir(fn, real_spec)
 
-                print(f"\n[Trace Recorder] Saving trace for {fn.__name__} to: {artifact_dir}")
-                recorder.save_trace(artifact_dir)
-            except Exception as e:
-                print(f"[Trace Recorder] ERROR: FAILED to save trace for {fn.__name__}: {e}")
+            #    print(f"\n[Trace Recorder] Saving trace for {fn.__name__} to: {artifact_dir}")
+            #    recorder.save_trace(artifact_dir)
+            #except Exception as e:
+            #    print(f"[Trace Recorder] ERROR: FAILED to save trace for {fn.__name__}: {e}")
 
     return wrapper

@@ -16,6 +16,8 @@ from tests.infra.trace.traced_spec import RecordingSpec
 # We rename these to match the expected class names in CLASS_NAME_MAP
 # and inherit from Container so isinstance(x, Container) checks pass.
 
+# TODO many things here needs to be fixed if decorator only generates data for dumper, that change breaks a lot of assumptions made here
+
 
 class BeaconState(Container):
     """Mocks a BeaconState"""
@@ -187,7 +189,7 @@ def test_argument_sanitization(recording_spec):
     assert step.op == "spec_call"
     assert step.method == "tick"
     assert step.input["slot"] == 42
-    assert type(step.input["slot"]) is int
+    assert isinstance(step.input["slot"], int)
 
     assert proxy._model._artifacts[state_name] == state
 
