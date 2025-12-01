@@ -101,9 +101,9 @@ class TraceModel(BaseModel):
     """
 
     # TODO: perhaps str, str unless it can int, bool, etc. sometimes
-    metadata: dict[str, Any] = Field(
-        ..., default_factory=list, description="Test run metadata (fork, preset, etc.)"
-    )
+    #metadata: dict[str, Any] = Field(
+    #    ..., default_factory=list, description="Test run metadata (fork, preset, etc.)"
+    #)
     trace: list[AssertStateStepModel | LoadStateStepModel | SpecCallStepModel] = Field(default_factory=list)
 
     # TODO: remove this one as well?
@@ -111,6 +111,8 @@ class TraceModel(BaseModel):
     # FIXME: but if we need to pass all artifacts as objects in output - we should keep them somewhere...
     # Private registry state (not serialized directly, used to build the trace)
     _artifacts: dict[str, View] = PrivateAttr(default_factory=dict)
+
+    # TODO: if we are using these to store artifacts to return to the runner we should probably enshrine it and make sure to serialize early (to avoid problems with mutation)
 
 
 # TODO most of these are not needed with the new approach

@@ -8,12 +8,13 @@ from eth2spec.utils.ssz.ssz_impl import serialize as ssz_serialize
 # from tests.infra.trace.models import CLASS_NAME_MAP, NON_SSZ_FIXTURES
 from tests.infra.trace.traced_spec import RecordingSpec
 
-DEFAULT_TRACE_DIR = Path("traces").resolve()  # FIXME: better default? TODO: probably move constant to traced_spec and import here
+#DEFAULT_TRACE_DIR = Path("traces").resolve()  # FIXME: better default? TODO: probably move constant to traced_spec and import here
 
 # TODO simplify this module, it can be very simple
 # TODO make this return data instead of writing files directly? runner should handle writing files?
 # TODO: are we using existing runners and dumpers or do we need a new thing for handling this?
 
+'''
 def _get_trace_output_dir(
     fn: Callable,
     real_spec: Any,  # FIXME typing
@@ -29,7 +30,7 @@ def _get_trace_output_dir(
     # TODO: handle parameterization?
 
     return path
-
+'''
 
 def record_spec_trace(fn: Callable) -> Callable:
     """
@@ -44,6 +45,7 @@ def record_spec_trace(fn: Callable) -> Callable:
 
     @functools.wraps(fn)
     def wrapper(*args, **kwargs):
+        # this might be somewhat overcomplicated just for figuring out if the first arg is a spec of not
         # 1. Bind arguments to find 'spec' and fixtures
         try:
             bound_args = inspect.signature(fn).bind(*args, **kwargs)
@@ -57,20 +59,20 @@ def record_spec_trace(fn: Callable) -> Callable:
 
         real_spec = bound_args.arguments["spec"]
 
-        metadata = {
-            "fork": real_spec.fork,
-            "preset": real_spec.config.PRESET_BASE,
-        }
+        #metadata = {
+        #    "fork": real_spec.fork,
+        #    "preset": real_spec.config.PRESET_BASE,
+        #}
 
-        # FIXME: we don't actually properly parametrize these, perhaps remove and simplify for now
-        parameters = {
-            k: v
-            for k, v in bound_args.arguments.items()
-            if isinstance(v, (int, str, bool, type(None)))
-        }
+        ## FIXME: we don't actually properly parametrize these, perhaps remove and simplify for now
+        #parameters = {
+        #    k: v
+        #    for k, v in bound_args.arguments.items()
+        #    if isinstance(v, (int, str, bool, type(None)))
+        #}
 
         # 3. Inject the recorder
-        recorder = RecordingSpec(real_spec, metadata=metadata, parameters=parameters)
+        recorder = RecordingSpec(real_spec) #, metadata=metadata, parameters=parameters)
         bound_args.arguments["spec"] = recorder
 
 
@@ -90,7 +92,7 @@ def record_spec_trace(fn: Callable) -> Callable:
             for x,y,z in [
                 ("trace", "data", recorder._model.model_dump(mode="json", exclude_none=True)),
             ] + [
-                (name, "ssz", ssz_serialize(value))
+                (name, "ssz", value)  # FIXME: this should probably be recorded as serialized already
                 for name, value in recorder._model._artifacts.items()
             ]:
                 yield x, y, z

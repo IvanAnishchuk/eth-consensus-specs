@@ -17,6 +17,7 @@ import wrapt
 from remerkleable.complex import Container
 
 from eth2spec.utils.ssz.ssz_typing import View
+from eth2spec.utils.ssz.ssz_impl import serialize as ssz_serialize
 
 from .models import (
     # NON_SSZ_FIXTURES,
@@ -71,23 +72,23 @@ class RecordingSpec(wrapt.ObjectProxy):
     # Internal state
     _model: TraceModel
     # FIXME Perhaps _self thing is unnecessary after all? Just underscore it...
-    _self_config_data: dict[str, Any]  # FIXME is this used?
+    #_self_config_data: dict[str, Any]  # FIXME is this used?
     _self_last_state_root: str | None  # TODO rename to last_state_root probably
 
     def __init__(
         self,
         wrapped_spec: Any,
         # initial_context_fixtures: dict[str, Any],
-        metadata: dict[str, Any] | None = None,
-        parameters: dict[str, Any] | None = None,
+        #metadata: dict[str, Any] | None = None,
+        #parameters: dict[str, Any] | None = None,
     ):
         super().__init__(wrapped_spec)
 
-        self._self_config_data = {}
+        #self._self_config_data = {}
         self._self_state_last_root = None
 
         # FIXME let's just add parameters to metadata dict? to be reviewed
-        self._model = TraceModel(metadata=(metadata or {}) | {"parameters": parameters or {}})
+        self._model = TraceModel() #metadata=(metadata or {}) | {"parameters": parameters or {}})
 
     # --- Interception Logic ---
 
@@ -145,7 +146,7 @@ class RecordingSpec(wrapt.ObjectProxy):
                         )
                         name = ssz_object_to_filename(state_obj)
                         # FIXME: ^^ isn't this already done in _self_process_arg?
-                        self._model._artifacts[name] = state_obj
+                        self._model._artifacts[name] = ssz_serialize(state_obj)
                         # FIXME: we are removing the mappings and just using the root hashes directly now
                         self._self_state_last_root = current_root_hex
 
@@ -254,7 +255,7 @@ class RecordingSpec(wrapt.ObjectProxy):
         ssz_filename = ssz_object_to_filename(arg)
         if ssz_filename:  # and ssz_filename not in NON_SSZ_FIXTURES:
             print("Registering SSZ object as artifact:", ssz_filename)
-            self._model._artifacts[ssz_filename] = arg
+            self._model._artifacts[ssz_filename] = ssz_serialize(arg)
             # TODO dump here
             return ssz_filename
 
