@@ -86,6 +86,7 @@ def record_spec_trace(fn: Callable) -> Callable:
         try:
             result = fn(*bound_args.args, **bound_args.kwargs)
         finally:
+            recorder.finalize()  # not sure if this is the right place but we need to do this after execution is done before returning data
             for x,y,z in [
                 ("trace", "data", recorder._model.model_dump(mode="json", exclude_none=True)),
             ] + [

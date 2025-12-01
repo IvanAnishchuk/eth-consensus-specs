@@ -55,7 +55,18 @@ class LoadStateStepModel(TraceStepModel):
 
     op: str = Field(description="The operation name", default="load_state")
     state_root: str = Field(description="The state root hash as hex string")
-    # FIXME: should we pass the hash root in params? TODO recheck the issue
+
+
+class AssertStateStepModel(TraceStepModel):
+    """
+    Assert state step in the execution trace.
+
+    Auto-added at the end of the trace with the last known state root.
+    State root is recorded as 'state_root'.
+    """
+
+    op: str = Field(description="The operation name", default="assert_state")
+    state_root: str = Field(description="The state root hash as hex string")
 
 class SpecCallStepModel(TraceStepModel):
     """
@@ -93,7 +104,7 @@ class TraceModel(BaseModel):
     metadata: dict[str, Any] = Field(
         ..., default_factory=list, description="Test run metadata (fork, preset, etc.)"
     )
-    trace: list[LoadStateStepModel | SpecCallStepModel] = Field(default_factory=list)
+    trace: list[AssertStateStepModel | LoadStateStepModel | SpecCallStepModel] = Field(default_factory=list)
 
     # TODO: remove this one as well?
     # it's used to temporary keep artifacts before dumping but really we should probably dump them right away and just save the hashes in trace
@@ -102,6 +113,7 @@ class TraceModel(BaseModel):
     _artifacts: dict[str, View] = PrivateAttr(default_factory=dict)
 
 
+# TODO most of these are not needed with the new approach
 # TODO make a standalone utility function maybe
 def dump_to_dir(trace_obj: TraceModel, output_dir: Path) -> None:
     """

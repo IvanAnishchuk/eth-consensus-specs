@@ -22,6 +22,7 @@ from .models import (
     # NON_SSZ_FIXTURES,
     TraceModel,
     TraceStepModel,
+    AssertStateStepModel,
     LoadStateStepModel,
     SpecCallStepModel,
     dump_to_dir,
@@ -96,7 +97,7 @@ class RecordingSpec(wrapt.ObjectProxy):
         If the attribute is a callable (function), it is wrapped to record execution.
         """
         # 1. Access recorder's own methods first
-        if name == "save_trace":
+        if name in ("save_trace", "finalize"):
             return object.__getattribute__(self, name)
 
         # 2. Retrieve the real attribute from the wrapped spec
@@ -261,6 +262,17 @@ class RecordingSpec(wrapt.ObjectProxy):
         # Pass it through for Pydantic to handle
         return arg
 
+    def _self_record_auto_assert_step(self) -> None:
+        """Appends assert_state step to the trace."""
+        # Auto-register last state root in assert_state step
+
+        step_model = AssertStateStepModel(state_root=self._self_last_state_root)
+        self._model.trace.append(step_model)
+
+    def finalize(self) -> None:
+        self._self_record_auto_assert_step()
+
+    # FIXME: probably not doing this anymore, cleanup
     def save_trace(self, output_dir: Path) -> None:
         """
         Writes the captured trace and artifacts to the filesystem.
