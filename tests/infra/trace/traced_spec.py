@@ -20,11 +20,10 @@ from eth2spec.utils.ssz.ssz_typing import View
 from eth2spec.utils.ssz.ssz_impl import serialize as ssz_serialize
 
 from .models import (
-    TraceModel,
-    TraceStepModel,
-    AssertStateStepModel,
-    LoadStateStepModel,
-    SpecCallStepModel,
+    TraceConfig,
+    AssertStateOp,
+    LoadStateOp,
+    SpecCallOp,
 )
 
 
@@ -35,15 +34,22 @@ def ssz_root_hex(obj: View) -> str:
     This is to avoid using ssz files on simple primitive values we can serialize directly.
     """
     # Use View to determine whether it's an SSZ object
+    #print(repr(obj))
     if not isinstance(obj, View):
+        return None
+
+    # blacklist primitives (another suboptimal half-measure, let's see)
+    if isinstance(obj, int) or isinstance(obj, bytes):
         return None
 
     # whitelist data types FIXME: find a better solution
     obj_type = type(obj).__name__.lower()
-    if obj_type not in ['beaconstate', 'attestation', 'beaconblock']:
-         return None
+    #print(obj_type)
+    #if obj_type not in ['beaconstate', 'attestation', 'beaconblock']:
+    #     return None
 
     # Generate Name (Content-Addressed by raw root hash)
+    #print('serialized', obj.hash_tree_root().hex())
     return obj.hash_tree_root().hex()
 
 class RecordingSpec(wrapt.ObjectProxy):
@@ -55,7 +61,7 @@ class RecordingSpec(wrapt.ObjectProxy):
     """
 
     # Internal state
-    _model: TraceModel
+    _model: TraceConfig
     _last_state_root: str | None
 
     def __init__(self, wrapped_spec: Any):
@@ -63,7 +69,7 @@ class RecordingSpec(wrapt.ObjectProxy):
 
         self._last_state_root = None
 
-        self._model = TraceModel()
+        self._model = TraceConfig(default_fork=wrapped_spec.fork)
 
     # --- Interception Logic ---
 
@@ -96,10 +102,11 @@ class RecordingSpec(wrapt.ObjectProxy):
             bound_args = self._bind_args(real_func, args, kwargs)
 
             # Process arguments and auto-register any NEW SSZ objects as artifacts
+            #print('???', list(bound_args.arguments.items()))
             serial_params = {k: self._process_arg(v) for k, v in bound_args.arguments.items()}
 
             # B. Identify State object and handle Context Switching
-            self._capture_pre_state(state := serial_params.get("state"))
+            self._capture_pre_state(state := bound_args.arguments.get("state"))
 
             # C. Execute the real function
             result = real_func(*args, **kwargs)
@@ -130,9 +137,10 @@ class RecordingSpec(wrapt.ObjectProxy):
     def _capture_pre_state(self, state: View | None) -> None:
         """Finds the BeaconState argument (if any) and captures its root hash."""
         if isinstance(state, View):
-            if self._last_state_root != (state_root_hex := state.hash_tree_root().hex()):
+            state_root_hex = state.hash_tree_root().hex()
+            if self._last_state_root != state_root_hex:
                 # Handle out-of-band mutation:
-                self._model.trace.append(LoadStateStepModel(state_root=state_root_hex))
+                self._model.trace.append(LoadStateOp(state_root=state_root_hex))
                 self._last_state_root = state_root_hex
 
 
@@ -142,14 +150,16 @@ class RecordingSpec(wrapt.ObjectProxy):
         """Appends a step to the trace."""
         # Auto-register the result if it's an SSZ object (by calling process_arg)
         serialized_result = self._process_arg(result) if result is not None else None
+        #print(type(serialized_result), repr(serialized_result))
 
         # Create the model to validate and sanitize data (bytes->hex, etc.)
-        step_model = SpecCallStepModel(
-            op=op, method=method, input=params, output=serialized_result,
+        #print(repr(op), repr(method), repr(params), repr(serialized_result))
+        step_model = SpecCallOp(
+            op=op, method=method, input=params, assert_output=serialized_result,
         )
+        #print(repr(step_model))
+        #print(step_model.model_dump())
         self._model.trace.append(step_model)
-
-    # TODO perhaps add a record_state_mutation method for load_state and similar
 
     def _capture_post_state(
         self,
@@ -173,13 +183,16 @@ class RecordingSpec(wrapt.ObjectProxy):
         Process a potential container.
         Returns the root hash of container or the original primitive.
         """
+        #if isinstance(arg, list):
+        #    return [self._process_arg(elem) for elem in arg]
+        #if isinstance(arg, dict):
+        #    return {key: self._process_arg(value) for key, value in arg}
         if ssz_hash := ssz_root_hex(arg):
-            print("Registering SSZ object as artifact:", ssz_hash)
             self._model._artifacts[ssz_hash] = ssz_serialize(arg)
-            return ssz_hash
+            #print(list(self._model._artifacts.keys())) 
+            #print('returning hash')
+            return f"{ssz_hash}.ssz_snappy"
 
-        # If register_object returns None, it's a primitive (or unknown type)
-        # Pass it through for Pydantic to handle
         return arg
 
     def _record_auto_assert_step(self) -> None:
@@ -187,7 +200,7 @@ class RecordingSpec(wrapt.ObjectProxy):
         # Auto-register last state root in assert_state step
 
         if self._last_state_root:
-            step_model = AssertStateStepModel(state_root=self._last_state_root)
+            step_model = AssertStateOp(state_root=self._last_state_root)
             self._model.trace.append(step_model)
 
     def finalize(self) -> None:

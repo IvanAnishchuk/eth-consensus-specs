@@ -4,6 +4,7 @@ from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 from eth2spec.utils.ssz.ssz_impl import serialize as ssz_serialize
+from eth2spec.utils.ssz.ssz_typing import View
 
 from tests.infra.trace.traced_spec import RecordingSpec
 

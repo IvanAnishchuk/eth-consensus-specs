@@ -9,32 +9,14 @@ Pydantic models defining the schema for the generated test vector artifacts:
 
 import os
 from pathlib import Path
-from typing import Any
+from typing import Annotated, Any, Literal
 
 import yaml
-from pydantic import BaseModel, Field, field_validator, PrivateAttr
+from pydantic import BaseModel, Field, field_validator, PrivateAttr, ConfigDict
 
 from eth2spec.utils.ssz.ssz_impl import serialize as ssz_serialize
 from eth2spec.utils.ssz.ssz_typing import View  # used to check SSZ objects
 import snappy
-
-
-# TODO: recheck how it all works without this now
-def _clean_value(value: Any) -> Any:
-    """
-    Hexify raw bytes.
-
-    Recursively sanitizes values for the trace:
-    - Bytes -> Hex string (with 0x prefix)
-    - Lists/Dicts -> Recursive clean
-    """
-    if isinstance(value, bytes):
-        return f"0x{value.hex()}"
-    if isinstance(value, list):
-        return [_clean_value(elem) for elem in value]
-    if isinstance(value, dict):
-        return {key: _clean_value(val) for key, val in value.items()}
-    return value
 
 
 class TraceStepModel(BaseModel):  # TODO: add ABC or whatever required for abstract class
@@ -43,10 +25,12 @@ class TraceStepModel(BaseModel):  # TODO: add ABC or whatever required for abstr
     Represents a function call ('op'), its inputs, and its outcome.
     """
 
-    #op: str = Field(..., description="The operation name e.g. load_state, spec_call")
+    # FIXME: I'm not sure this works well with SpecCallOp
+    #model_config = ConfigDict(extra="forbid")
+    op: str
 
 
-class LoadStateStepModel(TraceStepModel):
+class LoadStateOp(TraceStepModel):
     """
     Load state step in the execution trace.
 
@@ -54,11 +38,11 @@ class LoadStateStepModel(TraceStepModel):
     State root is recorded as 'state_root'.
     """
 
-    op: str = Field(description="The operation name", default="load_state")
-    state_root: str = Field(description="The state root hash as hex string")
+    op: Literal["load_state"] = Field(default="load_state")
+    state_root: str = Field()
 
 
-class AssertStateStepModel(TraceStepModel):
+class AssertStateOp(TraceStepModel):
     """
     Assert state step in the execution trace.
 
@@ -66,43 +50,50 @@ class AssertStateStepModel(TraceStepModel):
     State root is recorded as 'state_root'.
     """
 
-    op: str = Field(description="The operation name", default="assert_state")
-    state_root: str = Field(description="The state root hash as hex string")
+    op: Literal["assert_state"] = Field(default="assert_state")
+    state_root: str = Field()
 
-class SpecCallStepModel(TraceStepModel):
+class SpecCallOp(TraceStepModel):
     """
     Spec call step in the execution trace.
 
     Spec method called is recorded as 'method'.
     """
 
-    op: str = Field(description="The operation name", default="spec_call")
+    op: Literal["spec_call"] = Field(default="spec_call")
     method: str = Field(description="The spec function name, e.g., 'process_slots'")
     input: dict[str, Any] = Field(
         default_factory=dict, description="Arguments passed to the function"
     )
-    output: Any | None = Field(
-        None, description="The return value (context var reference or primitive)"
+    assert_output: Any | str | None = Field(
+        default=None, description="The return value (ssz hash or primitive)"
     )
 
-    # FIXME: perhaps we should use serializer rather than validator? sounds like more idiomatic pydantic maybe
-    @field_validator("input", "output", mode="before")
-    @classmethod
-    def sanitize_data(cls, value: Any) -> Any:
-        return _clean_value(value)
+    #@field_validator("input", "assert_output", mode="before")
+    #@classmethod
+    #def sanitize_data(cls, v: Any) -> Any:
+    #    if isinstance(v, bytes):
+    #        return f"0x{v.hex()}"
+    #    if isinstance(v, str):
+    #        return str(v)
+    #    if isinstance(v, int):
+    #        return int(v)
+    #    if isinstance(v, list):
+    #        return [cls.sanitize_data(x) for x in v]
+    #    if isinstance(v, dict):
+    #        return {k: cls.sanitize_data(val) for k, val in v.items()}
+    #    return v
+    #
+    #    #return _clean_value(v)
 
-class TraceModel(BaseModel):
+
+class TraceConfig(BaseModel):
     """
     The root schema for the trace file.
     Contains metadata, context, and the execution trace.
     """
+    default_fork: str = Field(default="")
+    trace: list[Annotated[AssertStateOp | LoadStateOp | SpecCallOp, Field(discriminator="op")]] = Field(default_factory=list)
 
-    trace: list[AssertStateStepModel | LoadStateStepModel | SpecCallStepModel] = Field(default_factory=list)
-
-    # TODO: remove this one as well?
-    # it's used to temporary keep artifacts before dumping but really we should probably dump them right away and just save the hashes in trace
-    # FIXME: but if we need to pass all artifacts as objects in output - we should keep them somewhere...
     # Private registry state (not serialized directly, used to build the trace)
-    _artifacts: dict[str, View] = PrivateAttr(default_factory=dict)
-
-    # TODO: if we are using these to store artifacts to return to the runner we should probably enshrine it and make sure to serialize early (to avoid problems with mutation)
+    _artifacts: dict[str, bytes] = PrivateAttr(default_factory=dict)
