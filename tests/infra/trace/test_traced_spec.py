@@ -136,7 +136,7 @@ def test_basic_function_call(recording_spec):
 
     # Find the context variable for this state
     state = BeaconState(root=root_hex, slot=uint64(0))
-    state_name = f"{root_hex_str}.ssz"
+    state_name = f"{root_hex_str}.ssz_snappy"
 
     # 1. Call function
     # This is the first usage of the state, so we expect an implicit load_state
@@ -148,14 +148,14 @@ def test_basic_function_call(recording_spec):
     # Verify auto-injected load_state
     load_step = proxy._model.trace[0]
     assert load_step.op == "load_state"
-    assert load_step.result == state_name
+    assert load_step.state_root == root_hex_str
     # TODO hash should match root_hex_str
 
     # Verify actual operation
     step = proxy._model.trace[1]
     assert step.op == "spec_call"
     assert step.method == "get_current_epoch"
-    assert step.result == 0
+    assert step.output == 0
     assert step.error is None
 
 
@@ -168,14 +168,14 @@ def test_argument_sanitization(recording_spec):
     proxy.get_root(data)
 
     step = proxy._model.trace[0]
-    assert step.params["data"] == "0xcafe"  # 0xhex
+    assert step.input["data"] == "0xcafe"  # 0xhex
 
     # 2. Int subclasses (Slot) should be raw ints
     slot = Slot(42)
 
     root_hex = b"\x10" * 32
     root_hex_str = root_hex.hex()
-    state_name = f"{root_hex_str}.ssz"
+    state_name = f"{root_hex_str}.ssz_snappy"
     state = BeaconState(root=root_hex, slot=uint64(0))
 
     proxy.tick(state, slot)
@@ -186,8 +186,8 @@ def test_argument_sanitization(recording_spec):
     step = proxy._model.trace[2]
     assert step.op == "spec_call"
     assert step.method == "tick"
-    assert step.params["slot"] == 42
-    assert type(step.params["slot"]) is int
+    assert step.input["slot"] == 42
+    assert type(step.input["slot"]) is int
 
     assert proxy._model._artifacts[state_name] == state
 
@@ -200,7 +200,7 @@ def test_result_sanitization(recording_spec):
     result = proxy.get_root(b"\xde\xad")
 
     step = proxy._model.trace[0]
-    assert step.result == f"0x{result.hex()}" == "0xdead"
+    assert step.output == f"0x{result.hex()}" == "0xdead"
 
 
 def test_exception_handling(recording_spec):
@@ -217,7 +217,7 @@ def test_exception_handling(recording_spec):
     assert step.method == "fail_op"
 
     # "result" is excluded when None
-    assert step.result is None
+    assert step.output is None
 
     assert step.error["type"] == "AssertionError"
     assert step.error["message"] == "Something went wrong"
@@ -231,7 +231,7 @@ def test_state_mutation_and_deduplication(recording_spec):
 
     root_hex = b"\x10" * 32
     root_hex_str = root_hex.hex()
-    state_name = f"{root_hex_str}.ssz"
+    state_name = f"{root_hex_str}.ssz_snappy"
     # state = proxy._model._artifacts[state_name]
     state = BeaconState(root=root_hex, slot=uint64(0))
 
@@ -245,7 +245,7 @@ def test_state_mutation_and_deduplication(recording_spec):
     tick_step = proxy._model.trace[1]
 
     assert load_step.op == "load_state"
-    assert load_step.result == state_name
+    assert load_step.state_root == root_hex_str
     assert tick_step.op == "spec_call"
     assert tick_step.method == "tick"
     assert proxy._model._artifacts[state_name] == state
@@ -281,11 +281,11 @@ def test_state_mutation_and_deduplication(recording_spec):
 
     load_step_2 = proxy._model.trace[3]
     assert load_step_2.op == "load_state"
-    assert load_step_2.result == f"{manual_root_hex}.ssz"
+    assert load_step_2.state_root == manual_root_hex
     assert proxy._model.trace[4].op == "spec_call"
     assert proxy._model.trace[4].method == "no_op"
 
-    assert proxy._model._artifacts[f"{manual_root_hex}.ssz"] == state
+    assert proxy._model._artifacts[f"{manual_root_hex}.ssz_snappy"] == state
 
 
 def test_non_state_object_naming(recording_spec):
@@ -306,10 +306,10 @@ def test_non_state_object_naming(recording_spec):
 
     ## The argument should be serialized as a context var with the hash
     # The artifact should be queued with hash-based filename
-    expected_name = f"beaconblock_{block_root.hex()}.ssz"
+    expected_name = f"{block_root.hex()}.ssz_snappy"
 
     ## The object should be registered in the map
     assert expected_name in proxy._model._artifacts
 
     # Check params
-    assert step.params["block"] == expected_name
+    assert step.input["block"] == expected_name

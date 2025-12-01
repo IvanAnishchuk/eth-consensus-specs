@@ -10,6 +10,7 @@ It uses `wrapt.ObjectProxy` to intercept function calls, recording their:
 """
 
 import inspect
+from pathlib import Path
 from typing import Any
 
 import wrapt
@@ -21,7 +22,10 @@ from .models import (
     # NON_SSZ_FIXTURES,
     TraceModel,
     TraceStepModel,
+    LoadStateStepModel,
+    SpecCallStepModel,
     dump_to_dir,
+    write_ssz_artifact,
 )
 
 
@@ -50,7 +54,7 @@ def ssz_object_to_filename(obj: View) -> str:
 
     # Generate Name (Content-Addressed by raw root hash)
     root_hex = obj.hash_tree_root().hex()
-    filename = f"{root_hex}.ssz"
+    filename = f"{root_hex}.ssz_snappy"
 
     return filename
 
@@ -118,6 +122,7 @@ class RecordingSpec(wrapt.ObjectProxy):
             serial_params = {k: self._self_process_arg(v) for k, v in bound_args.arguments.items()}
 
             # B. Identify State object and handle Context Switching
+            # FIXME: why is this called old_hash????
             state_obj, old_hash = self._self_capture_pre_state(bound_args)
 
             if old_hash is not None:
@@ -134,7 +139,8 @@ class RecordingSpec(wrapt.ObjectProxy):
                     if state_var:
                         self._model.trace.append(
                             # FIXME: probably a different class so there's no weird empty method here
-                            TraceStepModel(op="load_state", method="", params={}, result=state_var)
+                            # FIXME: Not sure about params here, we probably want to pass the root in params? but then result will be redundant... it's filename which is basically the same hash - recheck format in the issue
+                            LoadStateStepModel(state_root=current_root_hex)
                         )
                         name = ssz_object_to_filename(state_obj)
                         # FIXME: ^^ isn't this already done in _self_process_arg?
@@ -202,8 +208,8 @@ class RecordingSpec(wrapt.ObjectProxy):
         serialized_result = self._self_process_arg(result) if result is not None else None
 
         # Create the model to validate and sanitize data (bytes->hex, etc.)
-        step_model = TraceStepModel(
-            op=op, method=method, params=params, result=serialized_result, error=error
+        step_model = SpecCallStepModel(
+            op=op, method=method, input=params, output=serialized_result, error=error
         )
         self._model.trace.append(step_model)
 
@@ -239,22 +245,26 @@ class RecordingSpec(wrapt.ObjectProxy):
         Delegates to TraceModel to register objects/artifacts.
         Returns the context variable string or the original primitive.
         """
+        # FIXME: these checks are super redundant
         if not isinstance(arg, View):
             return arg
+        # TODO: dump SSZ artifacts right away
         # just use hashes and keep this simple
         ssz_filename = ssz_object_to_filename(arg)
         if ssz_filename:  # and ssz_filename not in NON_SSZ_FIXTURES:
             print("Registering SSZ object as artifact:", ssz_filename)
             self._model._artifacts[ssz_filename] = arg
+            # TODO dump here
             return ssz_filename
 
         # If register_object returns None, it's a primitive (or unknown type)
         # Pass it through for Pydantic to handle
         return arg
 
-    def save_trace(self, output_dir: str) -> None:
+    def save_trace(self, output_dir: Path) -> None:
         """
         Writes the captured trace and artifacts to the filesystem.
         Delegates the actual writing to the helper function.
         """
+        # TODO: add assert_state in the end based on last known state
         dump_to_dir(self._model, output_dir)

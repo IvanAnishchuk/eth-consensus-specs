@@ -8,6 +8,7 @@ Pydantic models defining the schema for the generated test vector artifacts:
 """
 
 import os
+from pathlib import Path
 from typing import Any
 
 import yaml
@@ -15,52 +16,72 @@ from pydantic import BaseModel, Field, field_validator, PrivateAttr
 
 from eth2spec.utils.ssz.ssz_impl import serialize as ssz_serialize
 from eth2spec.utils.ssz.ssz_typing import View  # used to check SSZ objects
+import snappy
 
 
-# simple way to make sure primitive subclasses are coerced to base types
-# FIXME: perhaps not the cleanest way, to be reviewed
-def _clean_value(v: Any) -> Any:
+def _clean_value(value: Any) -> Any:
     """
+    Hexify raw bytes.
+
     Recursively sanitizes values for the trace:
     - Bytes -> Hex string (with 0x prefix)
-    - Int subclasses -> int
     - Lists/Dicts -> Recursive clean
     """
-    if isinstance(v, bytes):
-        return f"0x{v.hex()}"
-    if isinstance(v, int):
-        return int(v)
-    if isinstance(v, list):
-        return [_clean_value(x) for x in v]
-    if isinstance(v, dict):
-        return {k: _clean_value(val) for k, val in v.items()}
-    return v
+    if isinstance(value, bytes):
+        return f"0x{value.hex()}"
+    if isinstance(value, list):
+        return [_clean_value(elem) for elem in value]
+    if isinstance(value, dict):
+        return {key: _clean_value(val) for key, val in value.items()}
+    return value
 
 
-class TraceStepModel(BaseModel):
+class TraceStepModel(BaseModel):  # TODO: add ABC or whatever required for abstract class
     """
     A single step in the execution trace.
     Represents a function call ('op'), its inputs, and its outcome.
     """
 
-    op: str = Field(..., description="The operation name e.g. load_state, spec_call")
-    # TODO we might want an abstract base class where op defines the subclass
-    method: str = Field(..., description="The spec function name, e.g., 'process_slots'")
-    params: dict[str, Any] = Field(
+    #op: str = Field(..., description="The operation name e.g. load_state, spec_call")
+
+
+class LoadStateStepModel(TraceStepModel):
+    """
+    Load state step in the execution trace.
+
+    Used when a previously-unseen state is used in spec all.
+    State root is recorded as 'state_root'.
+    """
+
+    op: str = Field(description="The operation name", default="load_state")
+    state_root: str = Field(description="The state root hash as hex string")
+    # FIXME: should we pass the hash root in params? TODO recheck the issue
+
+class SpecCallStepModel(TraceStepModel):
+    """
+    Spec call step in the execution trace.
+
+    Spec method called is recorded as 'method'.
+    """
+
+    op: str = Field(description="The operation name", default="spec_call")
+    method: str = Field(description="The spec function name, e.g., 'process_slots'")
+    input: dict[str, Any] = Field(
         default_factory=dict, description="Arguments passed to the function"
     )
-    result: Any | None = Field(
+    output: Any | None = Field(
         None, description="The return value (context var reference or primitive)"
     )
     error: dict[str, str] | None = Field(
         None, description="Error details if the operation raised an exception"
     )
+    # TODO: verify if we actually need to trace exceptions like ever
 
-    @field_validator("params", "result", mode="before")
+    # FIXME: perhaps we should use serializer rather than validator? sounds like more idiomatic pydantic maybe
+    @field_validator("input", "output", mode="before")
     @classmethod
-    def sanitize_data(cls, v: Any) -> Any:
-        return _clean_value(v)
-
+    def sanitize_data(cls, value: Any) -> Any:
+        return _clean_value(value)
 
 class TraceModel(BaseModel):
     """
@@ -72,15 +93,16 @@ class TraceModel(BaseModel):
     metadata: dict[str, Any] = Field(
         ..., default_factory=list, description="Test run metadata (fork, preset, etc.)"
     )
-    trace: list[TraceStepModel] = Field(default_factory=list)
+    trace: list[LoadStateStepModel | SpecCallStepModel] = Field(default_factory=list)
 
     # TODO: remove this one as well?
+    # it's used to temporary keep artifacts before dumping but really we should probably dump them right away and just save the hashes in trace
     # Private registry state (not serialized directly, used to build the trace)
     _artifacts: dict[str, View] = PrivateAttr(default_factory=dict)
 
 
 # TODO make a standalone utility function maybe
-def dump_to_dir(trace_obj: TraceModel, output_dir: str) -> None:
+def dump_to_dir(trace_obj: TraceModel, output_dir: Path) -> None:
     """
     Writes the trace and all artifacts to the specified directory.
     """
@@ -89,25 +111,30 @@ def dump_to_dir(trace_obj: TraceModel, output_dir: str) -> None:
     # TODO if we're not keeping the mapping, perhaps dump the objects right away?
     # 1. Write SSZ artifacts
     for filename, obj in trace_obj._artifacts.items():
-        _write_ssz(obj, os.path.join(output_dir, filename))  # TODO pathlib
+        write_ssz_artifact(obj, output_dir / filename)  # TODO pass dir only to be combined with hash filename later
 
     # 2. Write YAML files
-    _write_yaml( os.path.join(output_dir, "trace.yaml"))
+    path = output_dir / "trace.yaml"
+    try:
+        with open(path, "w") as f:
+            # TODO: mode='json' is recommended to convert to JSON-compatible types
+            # yeah, I think it works
+            yaml.dump(trace_obj.model_dump(mode="json", exclude_none=True), f, sort_keys=False, default_flow_style=False)
+    except Exception as e:
+        print(f"[Trace Recorder] ERROR: Failed to write YAML {path}: {e}")
+        raise
 
     print(f"[Trace Recorder] Saved artifacts to {output_dir}")
 
-def _write_ssz(obj: View, path: str) -> None:
-    """Helper to write an SSZ object to disk."""
+def write_ssz_artifact(obj: View, path: Path) -> None:
+    """Helper to write an SSZ object to disk (snappy compresed)."""
+    # TODO: we can get hash from obj here, perhaps we should use that and pass dirpath in path only to combine here
     try:
         with open(path, "wb") as f:
-            f.write(ssz_serialize(obj))
+            # FIXME: not completely officially sure I'm doing this right, there's no standard helper
+            f.write(snappy.compress(ssz_serialize(obj)))
+    # TODO: make sure we apply snappy compression everywhere and use ssz_snappy extension
+    # FIXME: is there any serialization+compression helper we should be using?
     except Exception as e:
-        print(f"ERROR: Failed to write SSZ artifact {path}: {e}")
-
-def _write_yaml(obj: TraceModel, path: str) -> None:
-    """Helper to write data as YAML to disk."""
-    try:
-        with open(path, "w") as f:
-            yaml.dump(obj.model_dump(exclude_none=True), f, sort_keys=False, default_flow_style=False)
-    except Exception as e:
-        print(f"ERROR: Failed to write YAML {path}: {e}")
+        print(f"[Trace Recorder] ERROR: Failed to write SSZ artifact {path}: {e}")
+        raise

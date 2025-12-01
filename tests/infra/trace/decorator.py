@@ -15,7 +15,7 @@ DEFAULT_TRACE_DIR = Path("traces").resolve()  # FIXME: better default? TODO: pro
 def _get_trace_output_dir(
     fn: Callable,
     real_spec: Any,  # FIXME typing
-) -> str:
+) -> Path:
     """Calculates the output directory path for the trace artifacts."""
 
     test_module = fn.__module__.split(".")[-1]
@@ -83,6 +83,6 @@ def record_spec_trace(fn: Callable) -> Callable:
                 print(f"\n[Trace Recorder] Saving trace for {fn.__name__} to: {artifact_dir}")
                 recorder.save_trace(artifact_dir)
             except Exception as e:
-                print(f"ERROR: [Trace Recorder] FAILED to save trace for {fn.__name__}: {e}")
+                print(f"[Trace Recorder] ERROR: FAILED to save trace for {fn.__name__}: {e}")
 
     return wrapper
