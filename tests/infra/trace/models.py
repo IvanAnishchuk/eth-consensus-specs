@@ -74,37 +74,40 @@ class TraceModel(BaseModel):
     )
     trace: list[TraceStepModel] = Field(default_factory=list)
 
+    # TODO: remove this one as well?
     # Private registry state (not serialized directly, used to build the trace)
     _artifacts: dict[str, View] = PrivateAttr(default_factory=dict)
 
-    # TODO make a standalone utility function maybe
-    def dump_to_dir(self, output_dir: str, config: dict[str, Any] = None) -> None:
-        """
-        Writes the trace and all artifacts to the specified directory.
-        """
-        os.makedirs(output_dir, exist_ok=True)
 
-        # 1. Write SSZ artifacts
-        for filename, obj in self._artifacts.items():
-            self._write_ssz(os.path.join(output_dir, filename), obj)
+# TODO make a standalone utility function maybe
+def dump_to_dir(trace_obj: TraceModel, output_dir: str) -> None:
+    """
+    Writes the trace and all artifacts to the specified directory.
+    """
+    os.makedirs(output_dir, exist_ok=True)
 
-        # 2. Write YAML files
-        self._write_yaml(os.path.join(output_dir, "trace.yaml"), self.model_dump(exclude_none=True))
+    # TODO if we're not keeping the mapping, perhaps dump the objects right away?
+    # 1. Write SSZ artifacts
+    for filename, obj in trace_obj._artifacts.items():
+        _write_ssz(obj, os.path.join(output_dir, filename))  # TODO pathlib
 
-        print(f"[Trace Recorder] Saved artifacts to {output_dir}")
+    # 2. Write YAML files
+    _write_yaml( os.path.join(output_dir, "trace.yaml"))
 
-    def _write_ssz(self, path: str, obj: Any) -> None:
-        """Helper to write an SSZ object to disk."""
-        try:
-            with open(path, "wb") as f:
-                f.write(ssz_serialize(obj))
-        except Exception as e:
-            print(f"ERROR: Failed to write SSZ artifact {path}: {e}")
+    print(f"[Trace Recorder] Saved artifacts to {output_dir}")
 
-    def _write_yaml(self, path: str, data: Any) -> None:
-        """Helper to write data as YAML to disk."""
-        try:
-            with open(path, "w") as f:
-                yaml.dump(data, f, sort_keys=False, default_flow_style=False)
-        except Exception as e:
-            print(f"ERROR: Failed to write YAML {path}: {e}")
+def _write_ssz(obj: View, path: str) -> None:
+    """Helper to write an SSZ object to disk."""
+    try:
+        with open(path, "wb") as f:
+            f.write(ssz_serialize(obj))
+    except Exception as e:
+        print(f"ERROR: Failed to write SSZ artifact {path}: {e}")
+
+def _write_yaml(obj: TraceModel, path: str) -> None:
+    """Helper to write data as YAML to disk."""
+    try:
+        with open(path, "w") as f:
+            yaml.dump(obj.model_dump(exclude_none=True), f, sort_keys=False, default_flow_style=False)
+    except Exception as e:
+        print(f"ERROR: Failed to write YAML {path}: {e}")

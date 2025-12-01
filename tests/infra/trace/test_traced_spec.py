@@ -136,7 +136,7 @@ def test_basic_function_call(recording_spec):
 
     # Find the context variable for this state
     state = BeaconState(root=root_hex, slot=uint64(0))
-    state_name = f"beaconstate_{root_hex_str}.ssz"
+    state_name = f"{root_hex_str}.ssz"
 
     # 1. Call function
     # This is the first usage of the state, so we expect an implicit load_state
@@ -175,7 +175,7 @@ def test_argument_sanitization(recording_spec):
 
     root_hex = b"\x10" * 32
     root_hex_str = root_hex.hex()
-    state_name = f"beaconstate_{root_hex_str}.ssz"
+    state_name = f"{root_hex_str}.ssz"
     state = BeaconState(root=root_hex, slot=uint64(0))
 
     proxy.tick(state, slot)
@@ -231,7 +231,7 @@ def test_state_mutation_and_deduplication(recording_spec):
 
     root_hex = b"\x10" * 32
     root_hex_str = root_hex.hex()
-    state_name = f"beaconstate_{root_hex_str}.ssz"
+    state_name = f"{root_hex_str}.ssz"
     # state = proxy._model._artifacts[state_name]
     state = BeaconState(root=root_hex, slot=uint64(0))
 
@@ -255,7 +255,7 @@ def test_state_mutation_and_deduplication(recording_spec):
     assert new_root != root_hex_str
 
     # Ensure the recorder internally tracked the new root
-    assert proxy._self_last_root == new_root
+    assert proxy._self_last_state_root == new_root
 
     # 2. Call op that DOES NOT change state
     proxy.no_op(state)
@@ -281,11 +281,11 @@ def test_state_mutation_and_deduplication(recording_spec):
 
     load_step_2 = proxy._model.trace[3]
     assert load_step_2.op == "load_state"
-    assert load_step_2.result == f"beaconstate_{manual_root_hex}.ssz"
+    assert load_step_2.result == f"{manual_root_hex}.ssz"
     assert proxy._model.trace[4].op == "spec_call"
     assert proxy._model.trace[4].method == "no_op"
 
-    assert proxy._model._artifacts[f"beaconstate_{manual_root_hex}.ssz"] == state
+    assert proxy._model._artifacts[f"{manual_root_hex}.ssz"] == state
 
 
 def test_non_state_object_naming(recording_spec):

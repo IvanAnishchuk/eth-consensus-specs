@@ -21,6 +21,7 @@ from .models import (
     # NON_SSZ_FIXTURES,
     TraceModel,
     TraceStepModel,
+    dump_to_dir,
 )
 
 
@@ -30,6 +31,7 @@ def ssz_object_to_filename(obj: View) -> str:
     - If it's an SSZ object (Container), it gets a hash-based name.
     - If it's a primitive, it returns None (passed through).
     """
+    # FIXME: we should use raw root hashes as filenames, we probably don't need this logic, but we still want to only use ssz serialization for containers not primitive types...
     # Use View to determine whether it's an SSZ object
     print("ssz_object_to_filename called with:", type(obj))
     if not isinstance(obj, View):
@@ -46,9 +48,9 @@ def ssz_object_to_filename(obj: View) -> str:
     if obj_type not in ['beaconstate', 'attestation', 'beaconblock']:
          return None
 
-    # Generate Name (Content-Addressed)
+    # Generate Name (Content-Addressed by raw root hash)
     root_hex = obj.hash_tree_root().hex()
-    filename = f"{obj_type}_{root_hex}.ssz"
+    filename = f"{root_hex}.ssz"
 
     return filename
 
@@ -65,7 +67,7 @@ class RecordingSpec(wrapt.ObjectProxy):
     _model: TraceModel
     # FIXME Perhaps _self thing is unnecessary after all? Just underscore it...
     _self_config_data: dict[str, Any]  # FIXME is this used?
-    _self_last_root: str | None  # TODO rename to last_state_root probably
+    _self_last_state_root: str | None  # TODO rename to last_state_root probably
 
     def __init__(
         self,
@@ -77,7 +79,7 @@ class RecordingSpec(wrapt.ObjectProxy):
         super().__init__(wrapped_spec)
 
         self._self_config_data = {}
-        self._self_last_root = None
+        self._self_state_last_root = None
 
         # FIXME let's just add parameters to metadata dict? to be reviewed
         self._model = TraceModel(metadata=(metadata or {}) | {"parameters": parameters or {}})
@@ -103,6 +105,8 @@ class RecordingSpec(wrapt.ObjectProxy):
         # 4. Return the recording wrapper
         return self._self_create_wrapper("spec_call", name, real_attr)
 
+    # FIXME: there might be another way: we can inspect the spec and wrap all functions at init time
+
     def _self_create_wrapper(self, op_name: str, method: str, real_func: callable) -> Any:
         """Creates a closure to record the function call."""
 
@@ -120,7 +124,7 @@ class RecordingSpec(wrapt.ObjectProxy):
                 current_root_hex = old_hash.hex()
                 # If the state passed to this function is different from the last one we saw,
                 # inject a `load_state` operation to switch context.
-                if self._self_last_root != current_root_hex:
+                if self._self_state_last_root != current_root_hex:
                     # Handle out-of-band mutation:
                     # The model's register_object logic handles re-registration if hash changed
 
@@ -135,7 +139,8 @@ class RecordingSpec(wrapt.ObjectProxy):
                         name = ssz_object_to_filename(state_obj)
                         # FIXME: ^^ isn't this already done in _self_process_arg?
                         self._model._artifacts[name] = state_obj
-                        self._self_last_root = current_root_hex
+                        # FIXME: we are removing the mappings and just using the root hashes directly now
+                        self._self_state_last_root = current_root_hex
 
             # C. Execute the real function
             try:
@@ -210,6 +215,7 @@ class RecordingSpec(wrapt.ObjectProxy):
         old_hash: bytes | None,
     ) -> None:
         """Updates the internal state tracker if the state object was mutated."""
+        # FIXME: we are doing this check in multiple places, perhaps unify
         if not hasattr(state_obj, "hash_tree_root") or old_hash is None:
             return
 
@@ -218,7 +224,7 @@ class RecordingSpec(wrapt.ObjectProxy):
 
         # Always update the last root to the current state's new root
         # This ensures subsequent operations know what the current state is.
-        self._self_last_root = new_root_hex
+        self._self_last_state_root = new_root_hex
 
         if old_hash == new_hash:
             return  # No content change
@@ -248,8 +254,7 @@ class RecordingSpec(wrapt.ObjectProxy):
 
     def save_trace(self, output_dir: str) -> None:
         """
-        FIXME: this might be a standalone hjelper function instead
         Writes the captured trace and artifacts to the filesystem.
-        Delegates the actual writing to the TraceModel.
+        Delegates the actual writing to the helper function.
         """
-        self._model.dump_to_dir(output_dir, config=self._self_config_data)
+        dump_to_dir(self._model, output_dir)

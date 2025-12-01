@@ -7,7 +7,7 @@ from typing import Any
 # from tests.infra.trace.models import CLASS_NAME_MAP, NON_SSZ_FIXTURES
 from tests.infra.trace.traced_spec import RecordingSpec
 
-DEFAULT_TRACE_DIR = Path("traces").resolve()  # FIXME: better default?
+DEFAULT_TRACE_DIR = Path("traces").resolve()  # FIXME: better default? TODO: probably move constant to traced_spec and import here
 
 # TODO simplify this module, it can be very simple
 
@@ -24,6 +24,7 @@ def _get_trace_output_dir(
     preset_name = real_spec.config.PRESET_BASE
 
     path = DEFAULT_TRACE_DIR / fork_name / preset_name / test_module / test_name
+    # TODO: handle parameterization?
 
     return path
 
@@ -32,7 +33,11 @@ def record_spec_trace(fn: Callable) -> Callable:
     """
     Decorator to wrap a pyspec test and record execution traces.
     Usage:
-        @record_spec_trace
+        @with_all_phases  # or other decorators
+        @spec_state_test  # still needed as before
+        @record_spec_trace  # new decorator to record trace
+        def test_my_feature(spec, ...):
+            ...
     """
 
     @functools.wraps(fn)
@@ -42,6 +47,7 @@ def record_spec_trace(fn: Callable) -> Callable:
             bound_args = inspect.signature(fn).bind(*args, **kwargs)
             bound_args.apply_defaults()
         except TypeError:
+            # FIXME: simplify?
             # Fallback for non-test invocations
             return fn(*args, **kwargs)
 
