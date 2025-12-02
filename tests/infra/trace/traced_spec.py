@@ -127,7 +127,10 @@ class RecordingSpec(wrapt.ObjectProxy):
         """Finds the BeaconState argument (if any) and captures its root hash."""
         if isinstance(state, View):
             state_root_hex = state.hash_tree_root().hex()
-            if self._last_state_root != state_root_hex:
+            if (old_root := self._last_state_root) != state_root_hex:
+                # Assert last output state
+                if old_root:
+                    self._model.trace.append(AssertStateOp(state_root=old_root))
                 # Handle out-of-band mutation:
                 self._model.trace.append(LoadStateOp(state_root=state_root_hex))
                 self._last_state_root = state_root_hex

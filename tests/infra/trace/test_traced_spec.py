@@ -250,13 +250,15 @@ def test_state_mutation_and_deduplication(recording_spec):
 
     # Now we EXPECT 'load_state' because the passed state (manual_root)
     # differs from what the recorder expects (new_root)
-    assert len(proxy._model.trace) == 5
+    assert len(proxy._model.trace) == 6
 
-    load_step_2 = proxy._model.trace[3]
+    assert_step = proxy._model.trace[3]
+    assert assert_step.op == "assert_state"
+    load_step_2 = proxy._model.trace[4]
     assert load_step_2.op == "load_state"
     assert load_step_2.state_root == manual_root_hex
-    assert proxy._model.trace[4].op == "spec_call"
-    assert proxy._model.trace[4].method == "no_op"
+    assert proxy._model.trace[5].op == "spec_call"
+    assert proxy._model.trace[5].method == "no_op"
 
     assert proxy._model._artifacts[manual_root_hex] == ssz_serialize(state)
 
