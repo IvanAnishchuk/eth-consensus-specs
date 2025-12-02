@@ -5,13 +5,13 @@ from collections.abc import Callable
 from tests.infra.trace.traced_spec import RecordingSpec
 
 
-def record_spec_trace(fn: Callable) -> Callable:
+def spec_trace(fn: Callable) -> Callable:
     """
     Decorator to wrap a pyspec test and record execution traces.
     Usage:
         @with_all_phases  # or other decorators
         @spec_state_test  # still needed as before
-        @record_spec_trace  # new decorator to record trace
+        @spec_trace  # new decorator to record trace
         def test_my_feature(spec, ...):
             ...
     """
