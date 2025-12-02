@@ -62,6 +62,12 @@ wrapt is used to wrap spec methods and record their calls, parameters and
 results. A decorator is used to set things up. Some simple pydantic models are
 used for the trace file structure and some sanitation/formatting.
 
+From a consumer standpoint (i.e. test runner) new tests using this decorator
+behave differently and are being detected by a new data type (a pydantic model
+instance). Some logic was added to `execute_test` in
+`tests/core/pyspec/eth2spec/gen_helpers/gen_base/gen_runner.py` to catch that
+new case and apply new serialization method.
+
 ### TODO
 
 This is still work in progress.

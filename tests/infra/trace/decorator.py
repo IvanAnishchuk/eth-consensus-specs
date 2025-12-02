@@ -45,13 +45,8 @@ def spec_trace(fn: Callable) -> Callable:
             recorder.finalize()
 
             # yield data so that runner can pick it up and dump
-            yield from [
-                # trace to be dumped as yaml
-                ("trace", "data", recorder._model.model_dump(mode="json", exclude_none=True)),
-            ] + [
-                (name, "ssz", value)
-                # ssz artifacts are already serialized and will be compressed by the dumper
-                for name, value in recorder._model._artifacts.items()
-            ]
+            yield "trace", "pydantic", recorder._model
+            # FIXME: using yield here because test function is being wrapped and everything expects a generator
+            # TODO: research better ways to modify the test runner to support generator/non-generator tests
 
     return wrapper
