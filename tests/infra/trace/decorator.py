@@ -1,10 +1,6 @@
 import functools
 import inspect
 from collections.abc import Callable
-from pathlib import Path
-from typing import Any
-from eth2spec.utils.ssz.ssz_impl import serialize as ssz_serialize
-from eth2spec.utils.ssz.ssz_typing import View
 
 from tests.infra.trace.traced_spec import RecordingSpec
 
@@ -28,10 +24,10 @@ def record_spec_trace(fn: Callable) -> Callable:
             bound_args.apply_defaults()
         except TypeError:
             # Fallback for non-test invocations
-            return fn(*args, **kwargs)
+            fn(*args, **kwargs)
 
         if "spec" not in bound_args.arguments:
-            return fn(*args, **kwargs)
+            fn(*args, **kwargs)
 
         # 2. Get the actual spec instance
         real_spec = bound_args.arguments["spec"]
@@ -42,10 +38,11 @@ def record_spec_trace(fn: Callable) -> Callable:
 
         # 4. Run test & Save trace
         try:
-            result = fn(*bound_args.args, **bound_args.kwargs)
-            # FIXME: ^^ I guess result is always ignored
+            fn(*bound_args.args, **bound_args.kwargs)
         finally:
-            recorder.finalize()  # not sure if this is the right place but we need to do this after execution is done before returning data
+            # we need to do this after execution is done before returning data
+            recorder.finalize()
+
             # yield data so that runner can pick it up and dump
             for x, y, z in [
                 # trace to be dumped as yaml

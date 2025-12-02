@@ -10,11 +10,9 @@ It uses `wrapt.ObjectProxy` to intercept function calls, recording their:
 """
 
 import inspect
-from pathlib import Path
 from typing import Any
 
 import wrapt
-from remerkleable.complex import Container
 
 from eth2spec.utils.ssz.ssz_typing import View
 from eth2spec.utils.ssz.ssz_impl import serialize as ssz_serialize
@@ -37,7 +35,7 @@ def ssz_root_hex(obj: View) -> str:
     if not isinstance(obj, View):
         return None
 
-    # blacklist primitives (another suboptimal half-measure, let's see)
+    # do not serialize primitives FIXME: confirm correctness
     # the idea here is that we don't want to go ssz for simple values even if they are subclassing View
     if isinstance(obj, int) or isinstance(obj, bytes):
         return None
@@ -84,8 +82,6 @@ class RecordingSpec(wrapt.ObjectProxy):
 
         # 4. Return the recording wrapper
         return self._create_wrapper("spec_call", name, real_attr)
-
-    # FIXME: there might be another way: we can inspect the spec and wrap all functions at init time
 
     def _create_wrapper(self, op_name: str, method: str, real_func: callable) -> Any:
         """Creates a closure to record the function call."""

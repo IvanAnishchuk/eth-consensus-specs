@@ -10,7 +10,7 @@ import pytest
 from remerkleable.basic import uint64
 from remerkleable.complex import Container
 from eth2spec.utils.ssz.ssz_impl import serialize as ssz_serialize
-from eth2spec.utils.ssz.ssz_typing import View
+from eth2spec.utils.ssz.ssz_typing import View  # FIXME: should maybe use view and not container for subclassing, confirm
 
 from tests.infra.trace.traced_spec import RecordingSpec
 

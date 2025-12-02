@@ -6,26 +6,18 @@ Pydantic models defining the schema for the generated test vector artifacts:
 - TraceStep: LoadStateOp | SpecCallOp | AssertStateOp
 """
 
-import os
-from pathlib import Path
 from typing import Annotated, Any, Literal
-
-import yaml
 from pydantic import BaseModel, Field, field_validator, PrivateAttr, ConfigDict
 
-from eth2spec.utils.ssz.ssz_impl import serialize as ssz_serialize
-from eth2spec.utils.ssz.ssz_typing import View  # used to check SSZ objects
-import snappy
 
 
 class TraceStepModel(BaseModel):  # TODO: add ABC or whatever required for abstract class
     """
-    A single step in the execution trace.
-    Represents a function call ('op'), its inputs, and its outcome.
+    A single abstract step in the execution trace.
     """
 
     # FIXME: I'm not sure this works well with SpecCallOp
-    #model_config = ConfigDict(extra="forbid")
+    model_config = ConfigDict(extra="forbid")
     op: str
 
 
