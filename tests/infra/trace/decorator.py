@@ -43,15 +43,9 @@ def spec_trace(fn: Callable) -> Callable:
         finally:
             # we need to do this after execution is done before returning data
             recorder.finalize()
-
-            # yield data so that runner can pick it up and dump
-            yield from [
-                # trace to be dumped as yaml
-                ("trace", "data", recorder._model.model_dump(mode="json", exclude_none=True)),
-            ] + [
-                (name, "ssz", value)
-                # ssz artifacts are already serialized and will be compressed by the dumper
-                for name, value in recorder._model._artifacts.items()
-            ]
+            # return the model instance as trace
+            # print(recorder._model.model_dump())
+            return recorder._model
+            #.model_dump(mode="json", exclude_none=True), recorder._model._artifacts
 
     return wrapper

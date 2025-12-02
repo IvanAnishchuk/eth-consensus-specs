@@ -1,3 +1,4 @@
+import inspect
 import multiprocessing
 import shutil
 import threading
@@ -90,17 +91,35 @@ def execute_test(test_case: TestCase, dumper: Dumper):
     outputs: list[tuple[str, str, Any]] = []
 
     try:
-        for name, kind, data in test_case.case_fn():
-            if kind == "meta":
-                meta[name] = data
-            else:
-                method = getattr(dumper, f"dump_{kind}", None)
-                if method is None:
-                    raise ValueError(f"Unknown kind {kind!r}")
-                outputs.append((name, kind, data))
+        if inspect.isgeneratorfunction(test_case.case_fn):
+            # classic test case with yield
+            print('false????')
+            for name, kind, data in test_case.case_fn():
+                if kind == "meta":
+                    meta[name] = data
+                else:
+                    method = getattr(dumper, f"dump_{kind}", None)
+                    if method is None:
+                        raise ValueError(f"Unknown kind {kind!r}")
+                    outputs.append((name, kind, data))
+        else:
+            # new test case returning pydantic model
+            print('true!!!')
+            trace = test_case.case_fn()
+            print(repr(trace))
+            print('okaaayy')
+            # serialize data from pydantic model instance
+            #print(repr(trace.model_dump(mode="json", exclude_none=True)))
+            outputs.append(("trace", "data", trace.model_dump(mode="json", exclude_none=True)))
+            # dump ssz artifacts
+            for name, value in trace._artifacts.items():
+                outputs.append((name, "ssz", value))
     except SkippedTest:
         # Bail without writing any files
         raise
+
+    print('WTF?!')
+    print(outputs)
 
     for name, kind, data in outputs:
         method = getattr(dumper, f"dump_{kind}")
