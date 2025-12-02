@@ -18,8 +18,6 @@ from tests.infra.trace.traced_spec import RecordingSpec
 # We rename these to match the expected class names in CLASS_NAME_MAP
 # and inherit from Container so isinstance(x, Container) checks pass.
 
-# TODO many things here needs to be fixed if decorator only generates data for dumper, that change breaks a lot of assumptions made here
-
 
 class BeaconState(Container):
     """Mocks a BeaconState"""
@@ -106,9 +104,6 @@ class MockSpec:
 
     def get_block_root(self, block: BeaconBlock) -> bytes:
         return block.hash_tree_root()
-
-    def fail_op(self) -> None:
-        raise AssertionError("Something went wrong")
 
 
 # --- Fixtures ---
@@ -208,27 +203,6 @@ def test_result_sanitization(recording_spec):
     assert step.assert_output == f"0x{result.hex()}" == "0xdead"
 
 
-@pytest.mark.xfail(reason="removed exception serialization logic, probably remove this as unneeded")
-def test_exception_handling(recording_spec):
-    """Tests that exceptions are captured in the trace."""
-    proxy = recording_spec
-
-    # Should re-raise the exception
-    with pytest.raises(AssertionError, match="Something went wrong"):
-        proxy.fail_op()
-
-    assert len(proxy._model.trace) == 0
-    step = proxy._model.trace[0]
-    assert step.op == "spec_call"
-    assert step.method == "fail_op"
-
-    # "result" is excluded when None
-    assert step.assert_output is None
-
-    #assert step.error["type"] == "AssertionError"
-    #assert step.error["message"] == "Something went wrong"
-
-
 def test_state_mutation_and_deduplication(recording_spec):
     """
     Tests the smart state tracking logic.
@@ -238,7 +212,7 @@ def test_state_mutation_and_deduplication(recording_spec):
     root_hex = b"\x10" * 32
     root_hex_str = root_hex.hex()
     state_name = root_hex_str
-    # state = proxy._model._artifacts[state_name]
+
     state = BeaconState(root=root_hex, slot=uint64(0))
 
     # 1. Call op that DOES change state
@@ -312,10 +286,10 @@ def test_non_state_object_naming(recording_spec):
 
     ## The argument should be serialized as a context var with the hash
     # The artifact should be queued with hash-based filename
-    expected_name = block_root.hex()
+    expected_name = f"{block_root.hex()}.ssz_snappy"
 
     ## The object should be registered in the map
-    assert expected_name in proxy._model._artifacts
+    assert block_root.hex() in proxy._model._artifacts
 
     # Check params
     assert step.input["block"] == expected_name
