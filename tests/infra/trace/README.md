@@ -17,37 +17,44 @@ from tests.infra.trace import spec_trace
 @with_all_phases
 @spec_state_test  # keep these like before
 @spec_trace  # this is the thing that makes the magic happen
-def test_linear_sanity_slots(spec, state):  # spec and state can be positional but the name matters
+def test_linear_sanity_slots_222(
+    spec, state
+):  # spec and state can be positional but the name matters
     # just use spec methods, they are traced automagically, and state is dumped
     spec.process_slot(state)
 ```
 
+this is for example purposes put into
+`tests/core/pyspec/eth2spec/test/gloas/sanity/test_slots_2.py` and can be run
+with something like
+
+```
+make reftests fork=gloas runner=sanity k=linear_sanity_slots_222 verbose=true
+```
+
+that produces a trace in
+`../consensus-spec-tests/tests/minimal/gloas/sanity/slots_2/pyspec_tests/linear_sanity_slots_222/trace.yaml`
+
 ### Spec trace file example
 
 ```yaml
-metadata:
-  fork: electra
-  preset: minimal
-context:
-  fixtures: []
-  parameters: {}
-  objects:
-    states:
-      a5c63f50136afb2ac758cc8c7fc11d3c0ff418f411522eba1cf4b7ac815523ab: states_a5c63f50136afb2ac758cc8c7fc11d3c0ff418f411522eba1cf4b7ac815523ab.ssz
-      90d959fafeb0ce724111cf6fe3900a6a6e464a3dbd3b637002aaf85d6585072e: states_90d959fafeb0ce724111cf6fe3900a6a6e464a3dbd3b637002aaf85d6585072e.ssz
-    blocks: {}
-    attestations: {}
+default_fork: gloas
 trace:
-- op: load_state
-  params: {}
-  result: $context.states.a5c63f50136afb2ac758cc8c7fc11d3c0ff418f411522eba1cf4b7ac815523ab
-- op: process_slot
-  params:
-    state: $context.states.a5c63f50136afb2ac758cc8c7fc11d3c0ff418f411522eba1cf4b7ac815523ab
+- {op: load_state, state_root: 
+    95d19311d30804985b06c40cc437bdfbb126209ad9ea8253ba33e0ff0af74c40}
+- op: spec_call
+  method: process_slot
+  input: {state: 
+      95d19311d30804985b06c40cc437bdfbb126209ad9ea8253ba33e0ff0af74c40.ssz_snappy}
+- {op: assert_state, state_root: 
+    41f562b491baaa9fdd981973c8aef64bb7c663c4b07f35141c16afc9e11184c1}
 ```
 
 In this example, `process_slot` does not return anything but we can see the
-final state being dumped automatically anmd it's different from the initial one.
+initial state and the final state being dumped automatically and they are
+different. In the other more complex example test (omitted here for brewety)
+we can examine how complex inputs and outputs being dumped and how out-of-band
+state mutations are being tracked with assert and load steps.
 
 ### Implementation details
 
@@ -59,21 +66,14 @@ used for the trace file structure and some sanitation/formatting.
 
 This is still work in progress.
 
-I'm not sure about how some of the finer trace details map to vectors yet, so
-this is a WIP. Once we have vectors generated from traces, we can refine the
-trace format as needed.
-
 I tried my best to separate core logic from the boilerplate needed but it could
 be improved upon.
 
-I didn't implelement some things we have with yield-based tests, Leo told me to
-not worry about that because the new framework is for new tests and we can keep
-the old ones as is for now and don't need feature parity.
+Some cleanup and polishing is still required and logic in the test consumer to
+detect and dump new type of output.
 
-Types are perhaps not as strict as they could be (partially because we had some
-flexibility in mind), but it's a start and in many cases we don't have enough
-typing in the tests to be sure about that. There's an issue open to improve
-typing in the tests in general.
+Typing could be improved and some data sanitization hacks I came up with are
+probably non-optimal. Test coverage needs another look, etc.
 
 ### Credits
 
