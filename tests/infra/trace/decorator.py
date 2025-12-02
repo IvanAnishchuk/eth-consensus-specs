@@ -4,6 +4,7 @@ from collections.abc import Callable
 
 from tests.infra.trace.traced_spec import RecordingSpec
 
+
 def record_spec_trace(fn: Callable) -> Callable:
     """
     Decorator to wrap a pyspec test and record execution traces.
@@ -44,14 +45,13 @@ def record_spec_trace(fn: Callable) -> Callable:
             recorder.finalize()
 
             # yield data so that runner can pick it up and dump
-            for x, y, z in [
+            yield from [
                 # trace to be dumped as yaml
                 ("trace", "data", recorder._model.model_dump(mode="json", exclude_none=True)),
             ] + [
                 (name, "ssz", value)
                 # ssz artifacts are already serialized and will be compressed by the dumper
                 for name, value in recorder._model._artifacts.items()
-            ]:
-                yield x, y, z
+            ]
 
     return wrapper

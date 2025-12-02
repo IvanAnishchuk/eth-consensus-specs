@@ -7,8 +7,8 @@ Pydantic models defining the schema for the generated test vector artifacts:
 """
 
 from typing import Annotated, Any, Literal
-from pydantic import BaseModel, Field, field_validator, PrivateAttr, ConfigDict
 
+from pydantic import BaseModel, ConfigDict, Field, field_validator, PrivateAttr
 
 
 class TraceStepModel(BaseModel):  # TODO: add ABC or whatever required for abstract class
@@ -44,6 +44,7 @@ class AssertStateOp(TraceStepModel):
     op: Literal["assert_state"] = Field(default="assert_state")
     state_root: str = Field()
 
+
 class SpecCallOp(TraceStepModel):
     """
     Spec call step in the execution trace.
@@ -78,15 +79,18 @@ class SpecCallOp(TraceStepModel):
         if isinstance(v, dict):
             return {k: cls.sanitize_data(val) for k, val in v.items()}
         return v
-    
+
 
 class TraceConfig(BaseModel):
     """
     The root schema for the trace file.
     Contains metadata, context, and the execution trace.
     """
+
     default_fork: str = Field(default="")
-    trace: list[Annotated[AssertStateOp | LoadStateOp | SpecCallOp, Field(discriminator="op")]] = Field(default_factory=list)
+    trace: list[Annotated[AssertStateOp | LoadStateOp | SpecCallOp, Field(discriminator="op")]] = (
+        Field(default_factory=list)
+    )
 
     # Private registry state (not serialized directly, used to build the trace)
     _artifacts: dict[str, bytes] = PrivateAttr(default_factory=dict)

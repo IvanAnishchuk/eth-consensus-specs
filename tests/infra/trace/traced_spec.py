@@ -14,14 +14,14 @@ from typing import Any
 
 import wrapt
 
-from eth2spec.utils.ssz.ssz_typing import View
 from eth2spec.utils.ssz.ssz_impl import serialize as ssz_serialize
+from eth2spec.utils.ssz.ssz_typing import View
 
 from .models import (
-    TraceConfig,
     AssertStateOp,
     LoadStateOp,
     SpecCallOp,
+    TraceConfig,
 )
 
 
@@ -42,6 +42,7 @@ def ssz_root_hex(obj: View) -> str:
 
     # Generate Name (Content-Addressed by raw root hash)
     return obj.hash_tree_root().hex()
+
 
 class RecordingSpec(wrapt.ObjectProxy):
     """
@@ -131,9 +132,12 @@ class RecordingSpec(wrapt.ObjectProxy):
                 self._model.trace.append(LoadStateOp(state_root=state_root_hex))
                 self._last_state_root = state_root_hex
 
-
     def _record_step(
-        self, op: str, method: str, params: dict, result: Any,
+        self,
+        op: str,
+        method: str,
+        params: dict,
+        result: Any,
     ) -> None:
         """Appends a step to the trace."""
         # Auto-register the result if it's an SSZ object (by calling process_arg)
@@ -141,7 +145,10 @@ class RecordingSpec(wrapt.ObjectProxy):
 
         # Create the model to validate and sanitize data (bytes->hex, etc.)
         step_model = SpecCallOp(
-            op=op, method=method, input=params, assert_output=serialized_result,
+            op=op,
+            method=method,
+            input=params,
+            assert_output=serialized_result,
         )
         self._model.trace.append(step_model)
 

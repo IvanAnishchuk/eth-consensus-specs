@@ -9,9 +9,8 @@ It's still pretty basic but covers the core recorder logic.
 import pytest
 from remerkleable.basic import uint64
 from remerkleable.complex import Container
-from eth2spec.utils.ssz.ssz_impl import serialize as ssz_serialize
-from eth2spec.utils.ssz.ssz_typing import View  # FIXME: should maybe use view and not container for subclassing, confirm
 
+from eth2spec.utils.ssz.ssz_impl import serialize as ssz_serialize
 from tests.infra.trace.traced_spec import RecordingSpec
 
 # --- Mocks for eth2spec objects ---
@@ -116,11 +115,6 @@ def mock_spec():
 
 @pytest.fixture
 def recording_spec(mock_spec):
-    # Initial context with one state
-    # Root is 101010...
-    initial_state = BeaconState(root=b"\x10" * 32)
-    context = {"state": initial_state}
-
     return RecordingSpec(mock_spec)
 
 
@@ -137,7 +131,6 @@ def test_basic_function_call(recording_spec):
 
     # Find the context variable for this state
     state = BeaconState(root=root_hex, slot=uint64(0))
-    state_name = root_hex_str
 
     # 1. Call function
     # This is the first usage of the state, so we expect an implicit load_state
