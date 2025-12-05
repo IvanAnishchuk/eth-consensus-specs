@@ -1,8 +1,6 @@
 """
-This file unit-tests the trace recorder itself using
-pytest fixtures and unittest.mock.
+This file unit-tests the trace recorder itself using mocks.
 
-This approach is faster and more isolated than using 'pytester'.
 It's still pretty basic but covers the core recorder logic.
 """
 
@@ -95,6 +93,10 @@ class MockSpec:
         # Does not modify state
         pass
 
+    def iterate_something(self, state: BeaconState, arg_list1: tuple, arg_list2: list) -> None:
+        # just for testing sanitization logic
+        return list(arg_list1) + arg_list2
+
     def get_current_epoch(self, state: BeaconState) -> int:
         return 0
 
@@ -143,13 +145,27 @@ def test_basic_function_call(recording_spec):
     load_step = proxy._model.trace[0]
     assert load_step.op == "load_state"
     assert load_step.state_root == root_hex_str
-    # TODO hash should match root_hex_str
+
+    assert load_step.model_dump(mode="json").get("state_root") == f"{root_hex_str}.ssz_snappy"
+    assert proxy._model._artifacts[root_hex_str] == ssz_serialize(state)
 
     # Verify actual operation
     step = proxy._model.trace[1]
     assert step.op == "spec_call"
     assert step.method == "get_current_epoch"
     assert step.assert_output == 0
+
+    proxy._finalize_trace()
+    assert len(proxy._model.trace) == 3
+
+    # Verify auto-injected assert_state (must be the same state)
+    assert_step = proxy._model.trace[-1]
+    assert assert_step.op == "assert_state"
+    assert assert_step.state_root == root_hex_str
+
+    assert assert_step.model_dump(mode="json").get("state_root") == f"{root_hex_str}.ssz_snappy"
+    assert proxy._model._artifacts[root_hex_str] == ssz_serialize(state)
+
 
 
 def test_argument_sanitization(recording_spec):
@@ -186,6 +202,19 @@ def test_argument_sanitization(recording_spec):
     assert (step.model_dump(mode="json").get("input") or {}).get("slot") == 42
 
     assert proxy._model._artifacts[state_name] == ssz_serialize(state)
+
+    assert proxy.iterate_something(state, (1, 2), [3]) == [1, 2, 3]
+
+    step2 = proxy._model.trace[3]
+    assert step2.op == "spec_call"
+    assert step2.method == "iterate_something"
+    assert step2.input["arg_list1"] == (1, 2)
+    assert step2.input["arg_list2"] == [3]
+    assert step2.assert_output == [1, 2, 3]
+    assert isinstance(step2.input["arg_list1"], tuple)
+    assert isinstance(step2.input["arg_list2"], list)
+    assert isinstance(step2.assert_output, list)
+    assert step2.model_dump(mode="json").get("assert_output") == [1, 2, 3]
 
 
 def test_result_sanitization(recording_spec):
@@ -296,3 +325,18 @@ def test_non_state_object_naming(recording_spec):
     assert (step.model_dump(mode="json").get("input") or {}).get(
         "block"
     ) == f"{expected_name}.ssz_snappy"
+
+
+def test_empty_trace(recording_spec):
+    """Making sure no weird edge cases."""
+    proxy = recording_spec
+
+    # try to save a state that's not a state
+    proxy._capture_pre_state(None)
+    proxy._capture_post_state(None)
+    # try to finalize without a single state being captured
+    proxy._finalize_trace()
+
+    # Check the trace
+    assert len(proxy._model.trace) == 0
+    assert len(proxy._model._artifacts) == 0

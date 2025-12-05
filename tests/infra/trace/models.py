@@ -88,6 +88,8 @@ class SpecCallOp(TraceStepModel):
         if isinstance(v, int):
             return int(v)
         # recursively clean simple structures
+        if isinstance(v, tuple):
+            return tuple(cls.sanitize_data(x) for x in v)
         if isinstance(v, list):
             return [cls.sanitize_data(x) for x in v]
         if isinstance(v, dict):
