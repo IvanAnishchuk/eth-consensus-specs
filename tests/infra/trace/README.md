@@ -52,8 +52,8 @@ trace:
 
 In this example, `process_slot` does not return anything but we can see the
 initial state and the final state being dumped automatically and they are
-different. In the other more complex example test (omitted here for brewety)
-we can examine how complex inputs and outputs being dumped and how out-of-band
+different. In the other more complex example test (omitted here for brewety) we
+can examine how complex inputs and outputs being dumped and how out-of-band
 state mutations are being tracked with assert and load steps.
 
 ### Implementation details

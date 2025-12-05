@@ -96,7 +96,7 @@ def execute_test(test_case: TestCase, dumper: Dumper):
             elif kind == "pydantic":
                 outputs += [
                     # dump trace data for yaml serialization
-                    # FIXME: thise could probably be hidden behind a helper function
+                    # FIXME: this could probably be hidden behind a helper function
                     ("trace", "data", data.model_dump(mode="json", exclude_none=True)),
                 ] + [
                     (name, "ssz", value)

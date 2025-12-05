@@ -161,7 +161,9 @@ def test_argument_sanitization(recording_spec):
     proxy.get_root(data)
 
     step = proxy._model.trace[0]
-    assert step.input["data"] == "0xcafe"  # 0xhex
+    assert step.input["data"] == b"\xca\xfe"  # raw here
+
+    assert (step.model_dump(mode="json").get("input") or {}).get("data") == "0xcafe"
 
     # 2. Int subclasses (Slot) should be raw ints
     slot = Slot(42)
@@ -181,6 +183,7 @@ def test_argument_sanitization(recording_spec):
     assert step.method == "tick"
     assert step.input["slot"] == 42
     assert isinstance(step.input["slot"], int)
+    assert (step.model_dump(mode="json").get("input") or {}).get("slot") == 42
 
     assert proxy._model._artifacts[state_name] == ssz_serialize(state)
 
@@ -193,7 +196,8 @@ def test_result_sanitization(recording_spec):
     result = proxy.get_root(b"\xde\xad")
 
     step = proxy._model.trace[0]
-    assert step.assert_output == f"0x{result.hex()}" == "0xdead"
+    assert step.assert_output == b"\xde\xad"
+    assert step.model_dump(mode="json").get("assert_output") == f"0x{result.hex()}" == "0xdead"
 
 
 def test_state_mutation_and_deduplication(recording_spec):
@@ -281,10 +285,14 @@ def test_non_state_object_naming(recording_spec):
 
     ## The argument should be serialized as a context var with the hash
     # The artifact should be queued with hash-based filename
-    expected_name = f"{block_root.hex()}.ssz_snappy"
+    expected_name = block_root.hex()
 
     ## The object should be registered in the map
     assert block_root.hex() in proxy._model._artifacts
 
     # Check params
-    assert step.input["block"] == expected_name
+    assert step.input["block"] == f"{expected_name}.ssz_snappy"
+    # already suffixed (other than state root in load/assert blocks)
+    assert (step.model_dump(mode="json").get("input") or {}).get(
+        "block"
+    ) == f"{expected_name}.ssz_snappy"
