@@ -181,6 +181,12 @@ class RecordingSpec(wrapt.ObjectProxy):
         Returns the root hash of container or the original primitive.
         """
 
+        # recursively handle lists and tuples preserving type
+        if isinstance(arg, tuple):
+            return tuple(self._process_arg(elem) for elem in arg)
+        if isinstance(arg, list):
+            return [self._process_arg(elem) for elem in arg]
+
         if not is_serializable(arg):
             return arg
 
