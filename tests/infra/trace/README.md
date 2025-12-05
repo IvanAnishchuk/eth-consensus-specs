@@ -4,9 +4,15 @@ This is an implementation of #4603 a new testing framework for the Ethereum
 consensus spec tests, based on tracing spec method calls and recording them in a
 structured trace file.
 
-The basic idea for new tests is to use pytest more properly, to use fixture
-parametrization for forks and presets, and to use a spec trace file to generate
-vectors (the actual vector generation is another task in progress).
+The basic idea is make tests more simple and linear and hide the minutae of
+dumping data into the test harness (`@spec_trace` decoratior) and automate
+everything that doesn't have to be manual.
+
+Spec is being wrapped into a transparent proxy object and all method call are
+being tracked including any state mutations before and after. Final state is
+recorded and all relevant artifacts including all states are being saved into
+SSZ artifacts (hash-addressed to avoid duplication).
+
 
 ### Usage and example test
 
@@ -70,16 +76,21 @@ new case and apply new serialization method.
 
 ### TODO
 
-This is still work in progress.
+This is still being cooked.
+
+The proxy thing itself worries me a little, I had to add a piece of custom
+logic to actually wrap methods (functional but it almost completely overrides
+wrapt's internal logic about that - maybe wrapt is just not the right tool.)
+
+Integration with testr runner is done by yielding pydantic model as a new data
+type and very simple change in the runner. It would be more natural to just
+return the value but that would require supporting non-generator functions as
+tests which would require much more code that seems reasonable here
 
 I tried my best to separate core logic from the boilerplate needed but it could
-be improved upon.
+be improved upon. Some cleanup and polishing is still required.
 
-Some cleanup and polishing is still required and logic in the test consumer to
-detect and dump new type of output.
-
-Typing could be improved and some data sanitization hacks I came up with are
-probably non-optimal. Test coverage needs another look, etc.
+Typing could be improved. Test coverage needs another look, etc.
 
 ### Credits
 
